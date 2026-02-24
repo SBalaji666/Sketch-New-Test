@@ -31,11 +31,13 @@ export default function App() {
   });
   
   const [sections, setSections] = useState([
-    { id: 1, label: 'S1', width: 280, type: 'closed', shelves: 0, drawers: { count: 6, height: 110, placement: 'full' } },
-    { id: 2, label: 'S2', width: 380, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
-    { id: 3, label: 'S3', width: 380, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
-    { id: 4, label: 'S4', width: 380, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
-    { id: 5, label: 'S5', width: 200, type: 'open', shelves: 4, drawers: { count: 0, height: 120, placement: 'bottom' } },
+    { id: 1, label: 'S1', width: 600, type: 'closed', shelves: 0, drawers: { count: 6, height: 160, placement: 'bottom' } },
+    { id: 2, label: 'S2', width: 500, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
+    { id: 3, label: 'S3', width: 500, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
+    { id: 4, label: 'S5', width: 300, type: 'open', shelves: 4, drawers: { count: 0, height: 120, placement: 'bottom' } },
+    { id: 5, label: 'S6', width: 500, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
+    { id: 6, label: 'S7', width: 500, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
+    { id: 7, label: 'S7', width: 600, type: 'closed', shelves: 0, drawers: { count: 6, height: 160, placement: 'bottom' } },
   ]);
 
   const [themeKey, setThemeKey] = useState('technical');
@@ -172,7 +174,7 @@ export default function App() {
             Cabinet Designer 3D
           </h1>
           <div style={{ fontSize: 10, color: ui.muted, marginTop: 3 }}>
-            Infurnia-style 3D Designer · {stats.totalParts} parts · {stats.totalSheets} sheets · £{Math.round(stats.materialCost + stats.hardwareCost)} total
+            3D Designer · {stats.totalParts} parts · {stats.totalSheets} sheets · £{Math.round(stats.materialCost + stats.hardwareCost)} total
           </div>
         </div>
 

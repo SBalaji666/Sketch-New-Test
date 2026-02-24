@@ -290,31 +290,31 @@ export class CabinetRenderer {
     }
   }
 
-  buildClosedSection(group, materials, x, w, h, d, startY, D, bt, section, matConfig, tolerances) {
+buildClosedSection(group, materials, x, w, h, d, startY, D, bt, section, matConfig, tolerances) {
     const doorGap = tolerances?.doorGap || 2;
     const doorThick = matConfig.door || 18;
+    const shelfThick = matConfig.shelf || 18;
     
     const drawerCount = section.drawers?.count || 0;
     const placement = section.drawers?.placement || 'bottom';
+    const drawerHeight = section.drawers?.height || 120;
 
-    // 1. FULL DRAWER SECTION (e.g., Section 1 config)
+    // 1. FULL DRAWER SECTION (e.g., Section 1)
     if (drawerCount > 0 && placement === 'full') {
-      const drawerHeight = (h - (doorGap * (drawerCount + 1))) / drawerCount;
+      const actualDrawerH = (h - (doorGap * (drawerCount + 1))) / drawerCount;
       
       for (let i = 0; i < drawerCount; i++) {
-        const drawerY = startY + doorGap + (i * (drawerHeight + doorGap)) + drawerHeight / 2;
+        const drawerY = startY + doorGap + (i * (actualDrawerH + doorGap)) + actualDrawerH / 2;
         
         // Drawer Face
-        const drawerFaceGeo = new THREE.BoxGeometry(w - doorGap * 2, drawerHeight, doorThick);
+        const drawerFaceGeo = new THREE.BoxGeometry(w - doorGap * 2, actualDrawerH, doorThick);
         const drawerFace = new THREE.Mesh(drawerFaceGeo, materials.drawerFace);
         drawerFace.position.set(x, drawerY, D + doorThick / 2);
         drawerFace.castShadow = true;
-        
-        // Store original material for hover effect
         drawerFace.userData = { originalMaterial: materials.drawerFace, section: section };
         group.add(drawerFace);
 
-        // Handle
+        // Drawer Handle
         const handleGeo = new THREE.CylinderGeometry(4, 4, w * 0.4, 16);
         handleGeo.rotateZ(Math.PI / 2);
         const handle = new THREE.Mesh(handleGeo, materials.handle);
@@ -322,50 +322,96 @@ export class CabinetRenderer {
         handle.castShadow = true;
         group.add(handle);
       }
+      
+      // Draw shelves even if it's full drawers (if configured)
+      if (section.shelves > 0) {
+         for (let i = 0; i < section.shelves; i++) {
+          const shelfY = startY + ((i + 1) * h) / (section.shelves + 1);
+          const shelfGeo = new THREE.BoxGeometry(w - 2, shelfThick, d - 10);
+          const shelf = new THREE.Mesh(shelfGeo, materials.shelf);
+          shelf.position.set(x, shelfY, (D + bt) / 2);
+          shelf.castShadow = true;
+          shelf.receiveShadow = true;
+          group.add(shelf);
+        }
+      }
       return; // Skip drawing main door
     }
 
-    // 2. STANDARD DOOR PANEL
-    const doorGeo = new THREE.BoxGeometry(w - doorGap * 2, h - doorGap * 2, doorThick);
-    const door = new THREE.Mesh(doorGeo, materials.door);
-    door.position.set(x, startY + h / 2, D + doorThick / 2);
-    door.castShadow = true;
-    door.receiveShadow = true;
-    door.userData = { originalMaterial: materials.door, section: section }; // For hover state
-    group.add(door);
+    // 2. PARTIAL DRAWERS (TOP OR BOTTOM) & DYNAMIC DOOR SIZING
+    let doorStartY = startY;
+    let doorHeight = h;
+    let shelfStartY = startY;
+    let shelfHeight = h;
 
-    // Door Handle
-    const handleGeo = new THREE.CylinderGeometry(4, 4, Math.min(h * 0.16, 300), 16);
-    const handle = new THREE.Mesh(handleGeo, materials.handle);
-    handle.position.set(x + w / 2 * 0.75, startY + h / 2, D + doorThick + 15);
-    handle.castShadow = true;
-    group.add(handle);
+    if (drawerCount > 0) {
+      const totalDrawerSpace = drawerCount * drawerHeight;
+      doorHeight = h - totalDrawerSpace; // The door takes up whatever space the drawers don't
 
-    // 3. INTERNAL DRAWERS (Partial placement)
-    if (drawerCount > 0 && placement !== 'full') {
-      const drawerHeight = section.drawers.height || 120;
-      
       for (let i = 0; i < drawerCount; i++) {
         let drawerY;
+        
+        // Calculate Y position based on placement
         if (placement === 'bottom') {
-          drawerY = startY + i * drawerHeight + drawerHeight / 2;
+          drawerY = startY + doorGap + (i * drawerHeight) + (drawerHeight - doorGap * 2) / 2;
+          doorStartY = startY + totalDrawerSpace; // Push door up
+          shelfStartY = doorStartY;
+          shelfHeight = doorHeight;
         } else if (placement === 'top') {
-          drawerY = startY + h - (i + 1) * drawerHeight + drawerHeight / 2;
+          // Put drawers above the door
+          drawerY = startY + doorHeight + doorGap + (i * drawerHeight) + (drawerHeight - doorGap * 2) / 2;
+          doorStartY = startY; // Door stays at bottom
+          shelfStartY = doorStartY;
+          shelfHeight = doorHeight;
         }
 
-        const innerDrawerThick = matConfig.drawerSide || 12;
-        const drawerFaceGeo = new THREE.BoxGeometry(w - 10, drawerHeight - 5, innerDrawerThick);
+        // External Drawer Face
+        const drawerFaceGeo = new THREE.BoxGeometry(w - doorGap * 2, drawerHeight - doorGap * 2, doorThick);
         const drawerFace = new THREE.Mesh(drawerFaceGeo, materials.drawerFace);
-        drawerFace.position.set(x, drawerY, D - innerDrawerThick / 2);
+        drawerFace.position.set(x, drawerY, D + doorThick / 2);
+        drawerFace.castShadow = true;
+        drawerFace.userData = { originalMaterial: materials.drawerFace, section: section };
         group.add(drawerFace);
+
+        // Drawer Handle
+        const handleGeo = new THREE.CylinderGeometry(4, 4, w * 0.4, 16);
+        handleGeo.rotateZ(Math.PI / 2);
+        const handle = new THREE.Mesh(handleGeo, materials.handle);
+        handle.position.set(x, drawerY, D + doorThick + 15);
+        handle.castShadow = true;
+        group.add(handle);
       }
     }
 
+    // 3. MAIN DOOR PANEL (covers the remaining height)
+    if (doorHeight > 0) {
+      const doorGeo = new THREE.BoxGeometry(w - doorGap * 2, doorHeight - doorGap * 2, doorThick);
+      const door = new THREE.Mesh(doorGeo, materials.door);
+      door.position.set(x, doorStartY + doorHeight / 2, D + doorThick / 2);
+      door.castShadow = true;
+      door.receiveShadow = true;
+      door.userData = { originalMaterial: materials.door, section: section }; 
+      group.add(door);
+
+      // Door Handle
+      const handleGeo = new THREE.CylinderGeometry(4, 4, Math.min(doorHeight * 0.16, 300), 16);
+      const handle = new THREE.Mesh(handleGeo, materials.handle);
+      
+      // Shift handle up or down based on drawer placement for realism
+      let handleY = doorStartY + doorHeight / 2; 
+      if (placement === 'bottom' && doorHeight > 600) handleY -= doorHeight * 0.2; 
+      if (placement === 'top' && doorHeight > 600) handleY += doorHeight * 0.2; 
+      
+      handle.position.set(x + w / 2 * 0.75, handleY, D + doorThick + 15);
+      handle.castShadow = true;
+      group.add(handle);
+    }
+
     // 4. INTERNAL SHELVES
-    if (section.shelves > 0 && drawerCount === 0) {
-      const shelfThick = matConfig.shelf || 18;
+    if (section.shelves > 0) {
       for (let i = 0; i < section.shelves; i++) {
-        const shelfY = startY + ((i + 1) * h) / (section.shelves + 1);
+        // Distribute shelves only within the height of the door, not the drawers
+        const shelfY = shelfStartY + ((i + 1) * shelfHeight) / (section.shelves + 1);
         const shelfGeo = new THREE.BoxGeometry(w - 2, shelfThick, d - 10);
         const shelf = new THREE.Mesh(shelfGeo, materials.shelf);
         shelf.position.set(x, shelfY, (D + bt) / 2);
