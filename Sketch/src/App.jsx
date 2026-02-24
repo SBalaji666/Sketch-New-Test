@@ -1,13 +1,13 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { THEMES } from './data/themes.js';
 import { DEFAULTS } from './data/constants.js';
 import { generateCutList, generateHardwareSchedule, generateMachiningSchedule } from './utils/cutListEngine.js';
-import { optimizeSheetLayout, generateNestingSVG, calculateMaterialCost } from './utils/sheetOptimizer.js';
+import { optimizeSheetLayout, calculateMaterialCost } from './utils/sheetOptimizer.js';
+import ThreeDViewer from './components/ThreeDViewer.jsx';
 import CutListTable from './components/CutListTable.jsx';
 import SheetOptimizationView from './components/SheetOptimizationView.jsx';
 import HardwareSchedule from './components/HardwareSchedule.jsx';
 import MachiningSchedule from './components/MachiningSchedule.jsx';
-import DrawingView from './components/DrawingView.jsx';
 import ConfigPanel from './components/ConfigPanel.jsx';
 
 const FONT = "'IBM Plex Mono', 'Courier New', monospace";
@@ -31,23 +31,19 @@ export default function App() {
   });
   
   const [sections, setSections] = useState([
-    { id: 1, label: 'S1', width: 500, type: 'closed', shelves: 0, drawers: { count: 6, height: 110, placement: 'full' } },
-    { id: 2, label: 'S2', width: 500, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
-    { id: 3, label: 'S3', width: 500, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
-    { id: 4, label: 'S4', width: 500, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
-    { id: 5, label: 'S5', width: 500, type: 'open', shelves: 4, drawers: { count: 0, height: 120, placement: 'bottom' } },
-    { id: 6, label: 'S6', width: 500, type: 'open', shelves: 4, drawers: { count: 0, height: 120, placement: 'bottom' } },
-    { id: 7, label: 'S7', width: 500, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
+    { id: 1, label: 'S1', width: 280, type: 'closed', shelves: 0, drawers: { count: 6, height: 110, placement: 'full' } },
+    { id: 2, label: 'S2', width: 380, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
+    { id: 3, label: 'S3', width: 380, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
+    { id: 4, label: 'S4', width: 380, type: 'closed', shelves: 2, drawers: { count: 0, height: 120, placement: 'bottom' } },
+    { id: 5, label: 'S5', width: 200, type: 'open', shelves: 4, drawers: { count: 0, height: 120, placement: 'bottom' } },
   ]);
 
   const [themeKey, setThemeKey] = useState('technical');
-  const [mainTab, setMainTab] = useState('drawing'); // drawing | cutlist | optimization | hardware | machining
-  const [drawingView, setDrawingView] = useState('3d');
-  const [downloading, setDownloading] = useState(false);
+  const [mainTab, setMainTab] = useState('3d-view'); // 3d-view | cutlist | optimization | hardware | machining
+  const [selectedSection, setSelectedSection] = useState(null);
 
   const theme = THEMES[themeKey];
   const ui = theme.ui;
-  const svgRef = useRef(null);
 
   // ── Build configuration object ─────────────────────────────────────────────
   const config = useMemo(() => ({
@@ -69,19 +65,9 @@ export default function App() {
   const downloadCSV = () => {
     const headers = ['#', 'Part', 'Section', 'Material', 'Qty', 'Length(mm)', 'Width(mm)', 'Thickness(mm)', 'Grain', 'Edge Band', 'Machining', 'Hardware', 'Notes'];
     const rows = cutList.map(p => [
-      p.id,
-      p.part,
-      p.section,
-      p.material,
-      p.qty,
-      Math.round(p.length),
-      Math.round(p.width),
-      p.thickness,
-      p.grain,
-      p.edgeBand,
-      p.machining || '',
-      p.hardware || '',
-      p.note,
+      p.id, p.part, p.section, p.material, p.qty,
+      Math.round(p.length), Math.round(p.width), p.thickness,
+      p.grain, p.edgeBand, p.machining || '', p.hardware || '', p.note,
     ]);
     const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -89,58 +75,6 @@ export default function App() {
     a.href = URL.createObjectURL(blob);
     a.download = `cutlist_${overall.length}x${overall.height}x${overall.depth}.csv`;
     a.click();
-  };
-
-  const downloadNesting = (material) => {
-    const svg = generateNestingSVG(sheetLayout, material);
-    if (!svg) return;
-    const blob = new Blob([svg], { type: 'image/svg+xml' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `nesting_${material.replace(/\s+/g, '_')}.svg`;
-    a.click();
-  };
-
-  const downloadDrawingSVG = () => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const blob = new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `cabinet_${overall.length}x${overall.height}x${overall.depth}_${drawingView}.svg`;
-    a.click();
-  };
-
-  const downloadDrawingPNG = async () => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    setDownloading(true);
-    const scale = 2;
-    const w = 820 * scale, h = 520 * scale;
-    const svgData = new XMLSerializer().serializeToString(svg).replace('<svg', `<svg xmlns="http://www.w3.org/2000/svg"`);
-    const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = theme.canvas;
-      ctx.fillRect(0, 0, w, h);
-      ctx.drawImage(img, 0, 0, w, h);
-      URL.revokeObjectURL(url);
-      const a = document.createElement('a');
-      a.href = canvas.toDataURL('image/png');
-      a.download = `cabinet_${overall.length}x${overall.height}x${overall.depth}_${drawingView}.png`;
-      a.click();
-      setDownloading(false);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      setDownloading(false);
-    };
-    img.src = url;
   };
 
   // ── Section management ─────────────────────────────────────────────────────
@@ -181,7 +115,7 @@ export default function App() {
     <button
       onClick={() => setMainTab(key)}
       style={{
-        padding: '8px 16px',
+        padding: '9px 18px',
         borderRadius: 8,
         fontFamily: FONT,
         fontSize: 11,
@@ -192,7 +126,7 @@ export default function App() {
         color: mainTab === key ? '#fff' : ui.text,
         display: 'flex',
         alignItems: 'center',
-        gap: 6,
+        gap: 7,
         transition: 'all 0.15s',
         position: 'relative',
       }}
@@ -217,47 +151,69 @@ export default function App() {
     </button>
   );
 
+  const handleSectionSelect = (section) => {
+    setSelectedSection(section);
+    // Highlight in config panel
+    const element = document.getElementById(`section-${section.id}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
   return (
     <div style={{ minHeight: '100vh', background: containerBg, padding: 20, fontFamily: FONT }}>
       <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 
       {/* Header */}
-      <div style={{ maxWidth: 1360, margin: '0 auto 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+      <div style={{ maxWidth: 1400, margin: '0 auto 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 22, color: ui.text, fontFamily: FONT, fontWeight: 600, letterSpacing: '-0.5px' }}>
-            Cabinet Designer Pro
+          <h1 style={{ margin: 0, fontSize: 24, color: ui.text, fontFamily: FONT, fontWeight: 600, letterSpacing: '-0.5px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 32 }}>🏗️</span>
+            Cabinet Designer 3D
           </h1>
-          <div style={{ fontSize: 10, color: ui.muted, marginTop: 2 }}>
-            Production-Ready Manufacturing System · {stats.totalParts} parts · {stats.totalSheets} sheets · £{Math.round(stats.materialCost + stats.hardwareCost)} total
+          <div style={{ fontSize: 10, color: ui.muted, marginTop: 3 }}>
+            Infurnia-style 3D Designer · {stats.totalParts} parts · {stats.totalSheets} sheets · £{Math.round(stats.materialCost + stats.hardwareCost)} total
           </div>
         </div>
 
         {/* Tab navigation */}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {tabBtn('Drawing', 'drawing',
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" /><line x1="2" y1="6" x2="14" y2="6" stroke="currentColor" strokeWidth="1.5" /><line x1="6" y1="6" x2="6" y2="14" stroke="currentColor" strokeWidth="1.5" /></svg>
+        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+          {tabBtn('3D View', '3d-view',
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+              <line x1="12" y1="22.08" x2="12" y2="12"/>
+            </svg>
           )}
           {tabBtn('Cut List', 'cutlist',
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><line x1="3" y1="4" x2="13" y2="4" stroke="currentColor" strokeWidth="1.5" /><line x1="3" y1="8" x2="10" y2="8" stroke="currentColor" strokeWidth="1.5" /><line x1="3" y1="12" x2="12" y2="12" stroke="currentColor" strokeWidth="1.5" /></svg>,
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 6h18M3 12h18M3 18h18"/>
+            </svg>,
             stats.totalParts
           )}
           {tabBtn('Nesting', 'optimization',
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="6" height="4" stroke="currentColor" strokeWidth="1.5" /><rect x="9" y="2" width="5" height="6" stroke="currentColor" strokeWidth="1.5" /><rect x="2" y="7" width="4" height="7" stroke="currentColor" strokeWidth="1.5" /></svg>,
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+            </svg>,
             stats.totalSheets
           )}
           {tabBtn('Hardware', 'hardware',
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="5" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" /><circle cx="11" cy="11" r="3" stroke="currentColor" strokeWidth="1.5" /><path d="M7 7l2 2" stroke="currentColor" strokeWidth="1.5" /></svg>,
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6M1 12h6m6 0h6"/>
+            </svg>,
             hardwareSchedule.length
           )}
           {tabBtn('Machining', 'machining',
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+            </svg>,
             machiningSchedule.length
           )}
         </div>
       </div>
 
       {/* Main content */}
-      <div style={{ maxWidth: 1360, margin: '0 auto', display: 'grid', gridTemplateColumns: '340px 1fr', gap: 12, alignItems: 'start' }}>
+      <div style={{ maxWidth: 1400, margin: '0 auto', display: 'grid', gridTemplateColumns: '340px 1fr', gap: 14, alignItems: 'start' }}>
         
         {/* Left: Configuration panel */}
         <ConfigPanel
@@ -276,8 +232,6 @@ export default function App() {
           updateSection={updateSection}
           themeKey={themeKey}
           setThemeKey={setThemeKey}
-          drawingView={drawingView}
-          setDrawingView={setDrawingView}
           mainTab={mainTab}
           totalMm={totalMm}
           ui={ui}
@@ -286,15 +240,10 @@ export default function App() {
         {/* Right: Main content area */}
         <div style={{ background: ui.bg, border: `1px solid ${ui.border}`, borderRadius: 12, padding: 16, minHeight: 680 }}>
           
-          {mainTab === 'drawing' && (
-            <DrawingView
+          {mainTab === '3d-view' && (
+            <ThreeDViewer
               config={config}
-              theme={theme}
-              drawingView={drawingView}
-              svgRef={svgRef}
-              downloading={downloading}
-              onDownloadSVG={downloadDrawingSVG}
-              onDownloadPNG={downloadDrawingPNG}
+              onSectionSelect={handleSectionSelect}
               ui={ui}
             />
           )}
@@ -311,7 +260,7 @@ export default function App() {
             <SheetOptimizationView
               sheetLayout={sheetLayout}
               materialCost={materialCost}
-              onDownloadNesting={downloadNesting}
+              onDownloadNesting={() => {}}
               ui={ui}
             />
           )}
@@ -334,6 +283,39 @@ export default function App() {
 
         </div>
       </div>
+
+      {/* Selected Section Info */}
+      {selectedSection && (
+        <div style={{
+          position: 'fixed',
+          bottom: 20,
+          right: 20,
+          background: ui.accent,
+          color: '#fff',
+          padding: 12,
+          borderRadius: 10,
+          fontSize: 11,
+          fontWeight: 600,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          zIndex: 1000,
+        }}>
+          Selected: {selectedSection.label} · {selectedSection.width}mm · {selectedSection.type}
+          <button
+            onClick={() => setSelectedSection(null)}
+            style={{
+              marginLeft: 12,
+              background: 'rgba(255,255,255,0.2)',
+              border: 'none',
+              color: '#fff',
+              borderRadius: 4,
+              padding: '2px 8px',
+              cursor: 'pointer',
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   );
 }
