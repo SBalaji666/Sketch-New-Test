@@ -305,29 +305,45 @@ export class CabinetRenderer {
 
   buildClosedSection(group, materials, x, w, h, d, ct, totalH, section, D) {
     const doorGap = 2;
+    const doorWidth = w - doorGap * 2;
+    const doorHeight = totalH - doorGap * 2;
     
-    // Door panel (Moved to D + 5 to sit at the front)
-    const doorGeo = new THREE.BoxGeometry(w - doorGap * 2, totalH - doorGap * 2, 18);
+    // --- UPDATED: Create a hinge group for the door ---
+    const doorHinge = new THREE.Group();
+    // Position the hinge at the left side of the cabinet section opening
+    doorHinge.position.set(x + doorGap, totalH / 2, D + 5);
+
+    // Door panel
+    const doorGeo = new THREE.BoxGeometry(doorWidth, doorHeight, 18);
+    // Translate geometry so the pivot point is at the left edge, not the center
+    doorGeo.translate(doorWidth / 2, 0, 0); 
+    
     const doorMat = materials.door.clone();
     doorMat.transparent = true;
     doorMat.opacity = 0.85; 
     const door = new THREE.Mesh(doorGeo, doorMat);
-    door.position.set(x + w / 2, totalH / 2, D + 5);
     door.castShadow = true;
     door.receiveShadow = true;
-    group.add(door);
+    doorHinge.add(door);
     
     const doorEdges = new THREE.EdgesGeometry(doorGeo);
     const doorLines = new THREE.LineSegments(doorEdges, new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1.5 }));
-    doorLines.position.copy(door.position);
-    group.add(doorLines);
+    doorHinge.add(doorLines);
 
-    // Handle (Moved to D + 15)
+    // Handle 
     const handleGeo = new THREE.CylinderGeometry(6, 6, totalH * 0.18, 16);
     const handle = new THREE.Mesh(handleGeo, materials.handle);
-    handle.position.set(x + w * 0.85, totalH / 2, D + 15);
+    // Position handle near the right edge of the door, projecting forward (+Z)
+    handle.position.set(doorWidth - 25, 0, 10);
     handle.castShadow = true;
-    group.add(handle);
+    doorHinge.add(handle);
+
+    // OPEN THE DOOR (Rotate around Y axis)
+    // -Math.PI / 2.5 opens it outward to the left by about 70 degrees
+    doorHinge.rotation.y = -Math.PI / 2.5;
+
+    group.add(doorHinge);
+    // ---------------------------------------------------
 
     const drawerCount = section.drawers?.count || 0;
     const drawerHeight = section.drawers?.height || 120;
