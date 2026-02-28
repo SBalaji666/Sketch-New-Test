@@ -39,6 +39,13 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
     }
   }, [config]);
 
+  // NEW: Update exploded state in the renderer
+  useEffect(() => {
+    if (rendererRef.current) {
+      rendererRef.current.setExploded(exploded);
+    }
+  }, [exploded]);
+
   const handleViewChange = (mode) => {
     setViewMode(mode);
     if (!rendererRef.current) return;

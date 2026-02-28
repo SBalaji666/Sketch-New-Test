@@ -27,6 +27,7 @@ export class CabinetRenderer {
     
     // Animation states
     this.isDoorsOpen = false;
+    this.isExploded = false; // NEW
     this.doorHinges = [];
     this.drawers = [];
     
@@ -37,16 +38,13 @@ export class CabinetRenderer {
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
 
-    // Scene
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0xf8f9fa);
 
-    // Camera
     this.camera = new THREE.PerspectiveCamera(50, width / height, 1, 10000);
     this.camera.position.set(0, 1200, 3500); 
     this.camera.lookAt(0, 1100, 0);
 
-    // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -56,11 +54,9 @@ export class CabinetRenderer {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.2;
     
-    // Ensure container can hold absolute positioned UI elements
     this.container.style.position = 'relative';
     this.container.appendChild(this.renderer.domElement);
 
-    // Controls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
@@ -72,31 +68,19 @@ export class CabinetRenderer {
     this.controls.rotateSpeed = 0.6;
     this.controls.target.set(0, 1100, 0);
 
-    // Lighting setup
     this.setupLighting();
-
-    // Grid and helpers
     this.setupHelpers();
-
-    // UI elements
     this.setupUI();
 
-    // Raycaster for interaction
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
 
-    // Event listeners
     this.setupEventListeners();
-
-    // Build initial cabinet
     this.buildCabinet();
-
-    // Start animation loop
     this.animate();
   }
 
   setupUI() {
-    // Create a sleek floating button
     this.toggleButton = document.createElement('button');
     this.toggleButton.innerText = 'Open Doors & Drawers';
     this.toggleButton.style.position = 'absolute';
@@ -110,7 +94,7 @@ export class CabinetRenderer {
     this.toggleButton.style.cursor = 'pointer';
     this.toggleButton.style.fontFamily = 'system-ui, -apple-system, sans-serif';
     this.toggleButton.style.fontWeight = '600';
-    this.toggleButton.style.fontSize = '14px';
+    this.toggleButton.style.fontSize = '10px';
     this.toggleButton.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06)';
     this.toggleButton.style.transition = 'all 0.2s ease';
     
@@ -124,7 +108,6 @@ export class CabinetRenderer {
     };
     
     this.toggleButton.onclick = () => this.toggleDoors();
-    
     this.container.appendChild(this.toggleButton);
   }
 
@@ -132,14 +115,18 @@ export class CabinetRenderer {
     this.isDoorsOpen = !this.isDoorsOpen;
     this.toggleButton.innerText = this.isDoorsOpen ? 'Close Doors & Drawers' : 'Open Doors & Drawers';
     
-    // Set target values for the animation loop
     this.doorHinges.forEach(door => {
-      door.userData.targetY = this.isDoorsOpen ? -Math.PI / 2.5 : 0;
+      door.userData.targetY = this.isDoorsOpen ? -Math.PI / 2.0 : 0;
     });
     
     this.drawers.forEach(drawer => {
       drawer.userData.targetZ = this.isDoorsOpen ? drawer.userData.openOffset : 0;
     });
+  }
+
+  // NEW: Expose explode state handler for React
+  setExploded(isExploded) {
+    this.isExploded = isExploded;
   }
 
   setupLighting() {
@@ -215,16 +202,18 @@ export class CabinetRenderer {
       });
     }
 
-    // Reset animation arrays
     this.doorHinges = [];
     this.drawers = [];
     this.isDoorsOpen = false;
+    this.selectedSection = null;
+    this.hoveredSection = null;
     if (this.toggleButton) this.toggleButton.innerText = 'Open Doors & Drawers';
 
     this.cabinetGroup = new THREE.Group();
     this.cabinetGroup.name = 'cabinet';
     
-    const materials = this.createMaterials();
+    // NEW: Save materials globally so we can reference them in selection/hover
+    this.materials = this.createMaterials();
     const { overall, materials: matThickness, sections } = this.config;
     const { length: L, height: H, depth: D } = overall;
     const ct = matThickness.carcass;
@@ -232,16 +221,48 @@ export class CabinetRenderer {
 
     this.cabinetGroup.position.set(-L / 2, 0, -D / 2);
 
-    this.buildCarcassStructure(materials, L, H, D, ct, bt);
-    this.buildSections(materials, sections, L, H, D, ct, bt);
+    this.buildCarcassStructure(this.materials, L, H, D, ct, bt);
+    this.buildSections(this.materials, sections, L, H, D, ct, bt);
     this.addDimensionAnnotations(L, H, D);
+
+    // NEW: Final configuration for selections and explode states
+    this.setupObjectMetadata();
 
     this.scene.add(this.cabinetGroup);
     this.centerCamera(L, H, D);
   }
 
+  // NEW: Store initial states for hovering and exploding
+  setupObjectMetadata() {
+    const box = new THREE.Box3().setFromObject(this.cabinetGroup);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+
+    this.cabinetGroup.traverse(obj => {
+      if (obj.isMesh || obj.isLineSegments) {
+        
+        // 1. Store original materials for hover restoration
+        if (obj.isMesh) {
+          obj.userData.originalMaterial = obj.material;
+        }
+
+        // 2. Store base positions and calculate explode vectors
+        obj.userData.originalPosition = obj.position.clone();
+        
+        const objBox = new THREE.Box3().setFromObject(obj);
+        const objCenter = new THREE.Vector3();
+        objBox.getCenter(objCenter);
+        
+        // Create an outward direction relative to the overall cabinet center
+        const dir = new THREE.Vector3().subVectors(objCenter, center).normalize();
+        if (dir.lengthSq() === 0) dir.set(0, 0, 1);
+        
+        obj.userData.explodeDirection = dir;
+      }
+    });
+  }
+
   buildCarcassStructure(materials, L, H, D, ct, bt) {
-    // Top panel
     const topGeo = new THREE.BoxGeometry(L, ct, D - bt);
     const top = new THREE.Mesh(topGeo, materials.carcass);
     top.position.set(L / 2, H - ct / 2, (D + bt) / 2);
@@ -254,7 +275,6 @@ export class CabinetRenderer {
     topLines.position.copy(top.position);
     this.cabinetGroup.add(topLines);
 
-    // Bottom panel
     const bottom = new THREE.Mesh(topGeo, materials.carcass);
     bottom.position.set(L / 2, ct / 2, (D + bt) / 2);
     bottom.castShadow = true;
@@ -266,7 +286,6 @@ export class CabinetRenderer {
     bottomLines.position.copy(bottom.position);
     this.cabinetGroup.add(bottomLines);
 
-    // Left side
     const sideGeo = new THREE.BoxGeometry(ct, H - ct * 2, D - bt);
     const leftSide = new THREE.Mesh(sideGeo, materials.carcass);
     leftSide.position.set(ct / 2, H / 2, (D + bt) / 2);
@@ -279,7 +298,6 @@ export class CabinetRenderer {
     leftLines.position.copy(leftSide.position);
     this.cabinetGroup.add(leftLines);
 
-    // Right side
     const rightSide = new THREE.Mesh(sideGeo, materials.carcass);
     rightSide.position.set(L - ct / 2, H / 2, (D + bt) / 2);
     rightSide.castShadow = true;
@@ -291,7 +309,6 @@ export class CabinetRenderer {
     rightLines.position.copy(rightSide.position);
     this.cabinetGroup.add(rightLines);
 
-    // Back panel
     const backGeo = new THREE.BoxGeometry(L - ct * 2, H, bt);
     const back = new THREE.Mesh(backGeo, materials.back);
     back.position.set(L / 2, H / 2, bt / 2);
@@ -371,7 +388,6 @@ export class CabinetRenderer {
     const doorWidth = w - doorGap * 2;
     const doorHeight = totalH - doorGap * 2;
     
-    // --- DOOR HINGE LOGIC ---
     const doorHinge = new THREE.Group();
     doorHinge.position.set(x + doorGap, totalH / 2, D + 5);
 
@@ -380,7 +396,7 @@ export class CabinetRenderer {
     
     const doorMat = materials.door.clone();
     doorMat.transparent = true;
-    doorMat.opacity = 0.65; 
+    doorMat.opacity = 0.75; 
     const door = new THREE.Mesh(doorGeo, doorMat);
     door.castShadow = true;
     door.receiveShadow = true;
@@ -396,12 +412,10 @@ export class CabinetRenderer {
     handle.castShadow = true;
     doorHinge.add(handle);
 
-    // Initial closed state
     doorHinge.rotation.y = 0;
     doorHinge.userData = { targetY: 0 }; 
     this.doorHinges.push(doorHinge);
     group.add(doorHinge);
-    // ------------------------
 
     const drawerCount = section.drawers?.count || 0;
     const drawerHeight = section.drawers?.height || 120;
@@ -431,11 +445,9 @@ export class CabinetRenderer {
       for (let i = 0; i < drawerCount; i++) {
         const drawerY = drawerAreaStart + (i * drawerHeight) + (drawerHeight / 2);
         
-        // --- DRAWER SLIDE LOGIC ---
         const drawerGroupTarget = new THREE.Group();
-        drawerGroupTarget.userData = { targetZ: 0, openOffset: d * 0.65 }; // Slides out 65% of depth
+        drawerGroupTarget.userData = { targetZ: 0, openOffset: d * 0.65 };
         
-        // Drawer box
         const drawerBoxGeo = new THREE.BoxGeometry(w - 50, drawerHeight - 15, d - 80);
         const drawerBox = new THREE.Mesh(drawerBoxGeo, materials.drawerFace);
         drawerBox.position.set(x + w / 2, drawerY, D - d / 2);
@@ -448,7 +460,6 @@ export class CabinetRenderer {
         drawerLines.position.copy(drawerBox.position);
         drawerGroupTarget.add(drawerLines);
         
-        // Drawer face
         const drawerFaceGeo = new THREE.BoxGeometry(w - doorGap * 4, drawerHeight - 8, 12);
         const drawerFace = new THREE.Mesh(drawerFaceGeo, materials.door);
         drawerFace.position.set(x + w / 2, drawerY, D + 2);
@@ -460,7 +471,6 @@ export class CabinetRenderer {
         faceLines.position.copy(drawerFace.position);
         drawerGroupTarget.add(faceLines);
 
-        // Drawer handle
         const dHandleGeo = new THREE.CylinderGeometry(3, 3, w * 0.45, 12);
         dHandleGeo.rotateZ(Math.PI / 2);
         const dHandle = new THREE.Mesh(dHandleGeo, materials.handle);
@@ -470,7 +480,6 @@ export class CabinetRenderer {
 
         this.drawers.push(drawerGroupTarget);
         group.add(drawerGroupTarget);
-        // --------------------------
       }
     } else {
       shelfAreaStart = ct;
@@ -543,6 +552,34 @@ export class CabinetRenderer {
     this.renderer.setSize(width, height);
   }
 
+  // NEW: Extracted material update logic to run properly on hover/click
+  updateHighlighting() {
+    // 1. Reset all to original
+    this.cabinetGroup.traverse(obj => {
+      if (obj.isMesh && obj.userData.originalMaterial) {
+        obj.material = obj.userData.originalMaterial;
+      }
+    });
+
+    // 2. Apply highlight to selected
+    if (this.selectedSection) {
+      this.selectedSection.traverse(obj => {
+        if (obj.isMesh && obj.userData.originalMaterial) {
+          obj.material = this.materials.highlight;
+        }
+      });
+    }
+
+    // 3. Apply hover to hovered (if it's not the selected one)
+    if (this.hoveredSection && this.hoveredSection !== this.selectedSection) {
+      this.hoveredSection.traverse(obj => {
+        if (obj.isMesh && obj.userData.originalMaterial) {
+          obj.material = this.materials.hover;
+        }
+      });
+    }
+  }
+
   onMouseMove(event) {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -551,38 +588,42 @@ export class CabinetRenderer {
     this.raycaster.setFromCamera(this.mouse, this.camera);
     const intersects = this.raycaster.intersectObjects(this.cabinetGroup.children, true);
 
-    if (this.hoveredSection) {
-      this.hoveredSection.traverse(obj => {
-        if (obj.material && obj.userData.originalMaterial) {
-          obj.material = obj.userData.originalMaterial;
-        }
-      });
-      this.hoveredSection = null;
-    }
+    let activeSection = null;
 
     if (intersects.length > 0) {
       let parent = intersects[0].object;
       while (parent && parent.parent !== this.cabinetGroup) {
+        if (parent.userData.section) {
+          activeSection = parent;
+          break;
+        }
         parent = parent.parent;
       }
-      if (parent && parent.userData.section) {
-        this.hoveredSection = parent;
-        this.renderer.domElement.style.cursor = 'pointer';
-      }
-    } else {
-      this.renderer.domElement.style.cursor = 'default';
     }
+
+    // Only update materials if the hovered target changed
+    if (this.hoveredSection !== activeSection) {
+      this.hoveredSection = activeSection;
+      this.updateHighlighting();
+    }
+    
+    this.renderer.domElement.style.cursor = activeSection ? 'pointer' : 'default';
   }
 
   onClick(event) {
     if (this.hoveredSection) {
+      // Toggle selection off if already selected, otherwise select it
       if (this.selectedSection === this.hoveredSection) {
         this.selectedSection = null;
       } else {
         this.selectedSection = this.hoveredSection;
       }
+
+      // Ensure material changes happen immediately
+      this.updateHighlighting();
+
       this.container.dispatchEvent(new CustomEvent('sectionselected', { 
-        detail: { section: this.hoveredSection.userData.section } 
+        detail: { section: this.selectedSection ? this.selectedSection.userData.section : null } 
       }));
     }
   }
@@ -612,9 +653,9 @@ export class CabinetRenderer {
 
   centerCamera(L, H, D) {
     const maxDim = Math.max(L, H, D);
-    const distance = maxDim * 1.6;
+    const distance = maxDim * 1.4;
     
-    this.camera.position.set(distance * 0.6, H * 0.8, distance * 0.8);
+    this.camera.position.set(-distance * 0.4, H * 0.8, distance * 0.8);
     this.controls.target.set(0, H * 0.5, 0);
     this.controls.update();
   }
@@ -627,9 +668,9 @@ export class CabinetRenderer {
   animate() {
     requestAnimationFrame(() => this.animate());
     
-    // Smooth animation interpolation (Lerp) for opening/closing
     const lerpFactor = 0.1;
     
+    // Smooth door/drawer animation
     if (this.doorHinges.length > 0) {
       this.doorHinges.forEach(door => {
         door.rotation.y += (door.userData.targetY - door.rotation.y) * lerpFactor;
@@ -639,6 +680,23 @@ export class CabinetRenderer {
     if (this.drawers.length > 0) {
       this.drawers.forEach(drawer => {
         drawer.position.z += (drawer.userData.targetZ - drawer.position.z) * lerpFactor;
+      });
+    }
+
+    // NEW: Smooth Explode animation interpolating saved originalPosition and direction
+    const explodeDistance = 350; 
+    if (this.cabinetGroup) {
+      this.cabinetGroup.traverse(obj => {
+        if ((obj.isMesh || obj.isLineSegments) && obj.userData.originalPosition) {
+          const targetPos = obj.userData.originalPosition.clone();
+          
+          if (this.isExploded) {
+            const offset = obj.userData.explodeDirection.clone().multiplyScalar(explodeDistance);
+            targetPos.add(offset);
+          }
+          
+          obj.position.lerp(targetPos, lerpFactor);
+        }
       });
     }
 
