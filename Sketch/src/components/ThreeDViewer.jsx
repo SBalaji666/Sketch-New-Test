@@ -1,10 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { CabinetRenderer } from '../three/CabinetRenderer.js';
+import React, { useEffect, useRef, useState } from "react";
+import { CabinetRenderer } from "../three/CabinetRenderer.js";
 
 export default function ThreeDViewer({ config, onSectionSelect, ui }) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
-  const [viewMode, setViewMode] = useState('perspective');
+  const [viewMode, setViewMode] = useState("perspective");
   const [showDimensions, setShowDimensions] = useState(true);
   const [exploded, setExploded] = useState(false);
 
@@ -20,14 +20,20 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
         onSectionSelect(event.detail.section);
       }
     };
-    containerRef.current.addEventListener('sectionselected', handleSectionSelect);
+    containerRef.current.addEventListener(
+      "sectionselected",
+      handleSectionSelect,
+    );
 
     return () => {
       if (rendererRef.current) {
         rendererRef.current.dispose();
       }
       if (containerRef.current) {
-        containerRef.current.removeEventListener('sectionselected', handleSectionSelect);
+        containerRef.current.removeEventListener(
+          "sectionselected",
+          handleSectionSelect,
+        );
       }
     };
   }, []);
@@ -55,19 +61,19 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
     const controls = rendererRef.current.controls;
 
     switch (mode) {
-      case 'front':
+      case "front":
         camera.position.set(0, H / 2, L * 1.5);
         controls.target.set(0, H / 2, 0);
         break;
-      case 'side':
+      case "side":
         camera.position.set(L * 1.5, H / 2, 0);
         controls.target.set(0, H / 2, 0);
         break;
-      case 'top':
+      case "top":
         camera.position.set(0, Math.max(L, D) * 1.5, 0);
         controls.target.set(0, 0, 0);
         break;
-      case 'perspective':
+      case "perspective":
       default:
         const maxDim = Math.max(L, H, D);
         const distance = maxDim * 1.8;
@@ -80,68 +86,79 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
 
   const handleScreenshot = () => {
     if (!rendererRef.current) return;
-    const dataURL = rendererRef.current.renderer.domElement.toDataURL('image/png');
-    const a = document.createElement('a');
+    const dataURL =
+      rendererRef.current.renderer.domElement.toDataURL("image/png");
+    const a = document.createElement("a");
     a.href = dataURL;
     a.download = `cabinet-3d-${Date.now()}.png`;
     a.click();
   };
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
       {/* 3D Canvas Container */}
-      <div 
-        ref={containerRef} 
-        style={{ 
-          width: '100%', 
-          height: '600px',
+      <div
+        ref={containerRef}
+        style={{
+          width: "100%",
+          height: "600px",
           borderRadius: 10,
-          overflow: 'hidden',
+          overflow: "hidden",
           border: `1px solid ${ui.border}`,
         }}
       />
 
       {/* Control Panel Overlay */}
-      <div style={{
-        position: 'absolute',
-        top: 16,
-        right: 16,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        background: ui.bg,
-        padding: 12,
-        borderRadius: 10,
-        border: `1px solid ${ui.border}`,
-        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-      }}>
+      <div
+        style={{
+          position: "absolute",
+          top: 16,
+          right: 16,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          background: ui.bg,
+          padding: 12,
+          borderRadius: 10,
+          border: `1px solid ${ui.border}`,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+        }}
+      >
         {/* View Mode Buttons */}
-        <div style={{ fontSize: 9, color: ui.muted, fontWeight: 600, marginBottom: 4, letterSpacing: 0.5 }}>
+        <div
+          style={{
+            fontSize: 9,
+            color: ui.muted,
+            fontWeight: 600,
+            marginBottom: 4,
+            letterSpacing: 0.5,
+          }}
+        >
           CAMERA VIEW
         </div>
         {[
-          ['Perspective', 'perspective', '🔷'],
-          ['Front', 'front', '⬜'],
-          ['Side', 'side', '⬛'],
-          ['Top', 'top', '🔳'],
+          ["Perspective", "perspective", "🔷"],
+          ["Front", "front", "⬜"],
+          ["Side", "side", "⬛"],
+          ["Top", "top", "🔳"],
         ].map(([label, mode, icon]) => (
           <button
             key={mode}
             onClick={() => handleViewChange(mode)}
             style={{
-              padding: '6px 12px',
+              padding: "6px 12px",
               borderRadius: 6,
               fontSize: 10,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
+              cursor: "pointer",
+              fontFamily: "inherit",
               border: `1.5px solid ${viewMode === mode ? ui.accent : ui.border}`,
               background: viewMode === mode ? ui.accent : ui.inputBg,
-              color: viewMode === mode ? '#fff' : ui.text,
+              color: viewMode === mode ? "#fff" : ui.text,
               fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
+              display: "flex",
+              alignItems: "center",
               gap: 6,
-              transition: 'all 0.15s',
+              transition: "all 0.15s",
             }}
           >
             <span>{icon}</span>
@@ -149,23 +166,23 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
           </button>
         ))}
 
-        <div style={{ height: 1, background: ui.border, margin: '8px 0' }} />
+        <div style={{ height: 1, background: ui.border, margin: "8px 0" }} />
 
         {/* Actions */}
         <button
           onClick={handleScreenshot}
           style={{
-            padding: '6px 12px',
+            padding: "6px 12px",
             borderRadius: 6,
             fontSize: 10,
-            cursor: 'pointer',
-            fontFamily: 'inherit',
+            cursor: "pointer",
+            fontFamily: "inherit",
             border: `1.5px solid ${ui.border}`,
             background: ui.inputBg,
             color: ui.text,
             fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
+            display: "flex",
+            alignItems: "center",
             gap: 6,
           }}
         >
@@ -175,59 +192,72 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
         <button
           onClick={() => setExploded(!exploded)}
           style={{
-            padding: '6px 12px',
+            padding: "6px 12px",
             borderRadius: 6,
             fontSize: 10,
-            cursor: 'pointer',
-            fontFamily: 'inherit',
+            cursor: "pointer",
+            fontFamily: "inherit",
             border: `1.5px solid ${exploded ? ui.accent : ui.border}`,
             background: exploded ? ui.accent : ui.inputBg,
-            color: exploded ? '#fff' : ui.text,
+            color: exploded ? "#fff" : ui.text,
             fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
+            display: "flex",
+            alignItems: "center",
             gap: 6,
           }}
         >
-          💥 {exploded ? 'Assembled' : 'Exploded'}
+          💥 {exploded ? "Assembled" : "Exploded"}
         </button>
       </div>
 
       {/* Keyboard Shortcuts Info */}
-      <div style={{
-        position: 'absolute',
-        bottom: 16,
-        left: 16,
-        background: ui.bg,
-        padding: '8px 12px',
-        borderRadius: 8,
-        border: `1px solid ${ui.border}`,
-        fontSize: 9,
-        color: ui.muted,
-        lineHeight: 1.6,
-      }}>
-        <div style={{ fontWeight: 600, marginBottom: 4, color: ui.text }}>Keyboard Shortcuts</div>
+      <div
+        style={{
+          position: "absolute",
+          bottom: 16,
+          left: 16,
+          background: ui.bg,
+          padding: "8px 12px",
+          borderRadius: 8,
+          border: `1px solid ${ui.border}`,
+          fontSize: 9,
+          color: ui.muted,
+          lineHeight: 1.6,
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 4, color: ui.text }}>
+          Keyboard Shortcuts
+        </div>
         <div>🖱️ Left drag: Rotate · Right drag: Pan · Scroll: Zoom</div>
-        <div><kbd>R</kbd> Reset view · <kbd>F</kbd> Front · <kbd>S</kbd> Side · <kbd>T</kbd> Top · <kbd>A</kbd> Axes</div>
+        <div>
+          <kbd>R</kbd> Reset view · <kbd>F</kbd> Front · <kbd>S</kbd> Side ·{" "}
+          <kbd>T</kbd> Top · <kbd>A</kbd> Axes
+        </div>
       </div>
 
       {/* Dimension Display */}
       {showDimensions && (
-        <div style={{
-          position: 'absolute',
-          top: 16,
-          left: 16,
-          background: ui.bg,
-          padding: 10,
-          borderRadius: 8,
-          border: `1px solid ${ui.border}`,
-          fontSize: 10,
-          color: ui.text,
-          fontWeight: 600,
-        }}>
-          <div>{config.overall.length} × {config.overall.height} × {config.overall.depth} mm</div>
+        <div
+          style={{
+            position: "absolute",
+            top: 16,
+            left: 16,
+            background: ui.bg,
+            padding: 10,
+            borderRadius: 8,
+            border: `1px solid ${ui.border}`,
+            fontSize: 10,
+            color: ui.text,
+            fontWeight: 600,
+          }}
+        >
+          <div>
+            {config.overall.length} × {config.overall.height} ×{" "}
+            {config.overall.depth} mm
+          </div>
           <div style={{ fontSize: 9, color: ui.muted, marginTop: 2 }}>
-            {config.sections.length} sections · {config.hardware.joinery} joinery
+            {config.sections.length} sections · {config.hardware.joinery}{" "}
+            joinery
           </div>
         </div>
       )}

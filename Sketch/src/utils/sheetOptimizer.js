@@ -1,4 +1,4 @@
-import { SHEET_MATERIALS } from '../data/constants.js';
+import { SHEET_MATERIALS } from "../data/constants.js";
 
 /**
  * 2D Bin Packing using Guillotine algorithm with grain constraint support
@@ -23,8 +23,12 @@ class Rectangle {
       return { fits: true, rotated: false };
     }
     // Check if part fits with 90° rotation (only if grain allows)
-    if (allowRotation && !part.grainConstrained && 
-        part.width <= this.width && part.length <= this.height) {
+    if (
+      allowRotation &&
+      !part.grainConstrained &&
+      part.width <= this.width &&
+      part.length <= this.height
+    ) {
       return { fits: true, rotated: true };
     }
     return { fits: false, rotated: false };
@@ -55,14 +59,20 @@ class Sheet {
   }
 
   get efficiency() {
-    const usedArea = this.placedParts.reduce((sum, p) => sum + p.width * p.height, 0);
+    const usedArea = this.placedParts.reduce(
+      (sum, p) => sum + p.width * p.height,
+      0,
+    );
     const totalArea = this.width * this.height;
     return totalArea > 0 ? (usedArea / totalArea) * 100 : 0;
   }
 
   get wasteArea() {
     const totalArea = this.width * this.height;
-    const usedArea = this.placedParts.reduce((sum, p) => sum + p.width * p.height, 0);
+    const usedArea = this.placedParts.reduce(
+      (sum, p) => sum + p.width * p.height,
+      0,
+    );
     return totalArea - usedArea;
   }
 
@@ -75,7 +85,8 @@ class Sheet {
 
     for (let i = 0; i < sorted.length; i++) {
       const rect = sorted[i];
-      const grainAllowsRotation = part.grain !== 'length' && part.grain !== 'width';
+      const grainAllowsRotation =
+        part.grain !== "length" && part.grain !== "width";
       const fitResult = rect.fits(part, grainAllowsRotation);
 
       if (fitResult.fits) {
@@ -85,7 +96,7 @@ class Sheet {
           rect.x,
           rect.y,
           fitResult.rotated,
-          this.index
+          this.index,
         );
         this.placedParts.push(placed);
 
@@ -94,7 +105,9 @@ class Sheet {
         this.freeRectangles.splice(rectIndex, 1);
 
         // Add used rectangle
-        this.usedRectangles.push(new Rectangle(rect.x, rect.y, placed.width, placed.height));
+        this.usedRectangles.push(
+          new Rectangle(rect.x, rect.y, placed.width, placed.height),
+        );
 
         // Split remaining space (guillotine cut)
         // Horizontal split
@@ -104,8 +117,8 @@ class Sheet {
               rect.x,
               rect.y + placed.height + sawKerf,
               rect.width,
-              rect.height - placed.height - sawKerf
-            )
+              rect.height - placed.height - sawKerf,
+            ),
           );
         }
 
@@ -116,8 +129,8 @@ class Sheet {
               rect.x + placed.width + sawKerf,
               rect.y,
               rect.width - placed.width - sawKerf,
-              placed.height
-            )
+              placed.height,
+            ),
           );
         }
 
@@ -135,7 +148,7 @@ class Sheet {
 export function optimizeSheetLayout(parts, sawKerf = 3) {
   // Group parts by material
   const partsByMaterial = {};
-  parts.forEach(part => {
+  parts.forEach((part) => {
     if (!partsByMaterial[part.material]) {
       partsByMaterial[part.material] = [];
     }
@@ -145,7 +158,7 @@ export function optimizeSheetLayout(parts, sawKerf = 3) {
         ...part,
         originalId: part.id,
         instanceNum: i + 1,
-        grainConstrained: part.grain === 'length' || part.grain === 'width',
+        grainConstrained: part.grain === "length" || part.grain === "width",
       });
     }
   });
@@ -170,7 +183,7 @@ export function optimizeSheetLayout(parts, sawKerf = 3) {
     });
 
     // Try to place each part
-    sortedParts.forEach(part => {
+    sortedParts.forEach((part) => {
       let placed = false;
 
       // Try existing sheets first
@@ -187,12 +200,14 @@ export function optimizeSheetLayout(parts, sawKerf = 3) {
           material,
           sheetSpec.width,
           sheetSpec.height,
-          currentSheetIndex++
+          currentSheetIndex++,
         );
         sheets.push(newSheet);
 
         if (!newSheet.place(part, sawKerf)) {
-          console.error(`Part ${part.part} (${part.length}×${part.width}) is too large for sheet!`);
+          console.error(
+            `Part ${part.part} (${part.length}×${part.width}) is too large for sheet!`,
+          );
         }
       }
     });
@@ -201,7 +216,8 @@ export function optimizeSheetLayout(parts, sawKerf = 3) {
       sheets,
       totalSheets: sheets.length,
       totalParts: materialParts.length,
-      averageEfficiency: sheets.reduce((sum, s) => sum + s.efficiency, 0) / sheets.length,
+      averageEfficiency:
+        sheets.reduce((sum, s) => sum + s.efficiency, 0) / sheets.length,
       totalCost: sheets.length * sheetSpec.cost,
       sheetSpec,
     };
@@ -222,7 +238,9 @@ export function generateNestingSVG(sheetLayout, material) {
   const sheetSpacing = 40;
 
   const svgWidth = layout.sheetSpec.width * scale + margin * 2;
-  const svgHeight = layout.sheets.length * (layout.sheetSpec.height * scale + sheetSpacing) + margin * 2;
+  const svgHeight =
+    layout.sheets.length * (layout.sheetSpec.height * scale + sheetSpacing) +
+    margin * 2;
 
   let svg = `<svg width="${svgWidth}" height="${svgHeight}" xmlns="http://www.w3.org/2000/svg">`;
   svg += `<defs>
@@ -232,7 +250,8 @@ export function generateNestingSVG(sheetLayout, material) {
   </defs>`;
 
   layout.sheets.forEach((sheet, sheetIdx) => {
-    const offsetY = margin + sheetIdx * (layout.sheetSpec.height * scale + sheetSpacing);
+    const offsetY =
+      margin + sheetIdx * (layout.sheetSpec.height * scale + sheetSpacing);
 
     // Draw sheet background
     svg += `<rect x="${margin}" y="${offsetY}" 
@@ -271,7 +290,7 @@ export function generateNestingSVG(sheetLayout, material) {
         font-family="monospace" 
         font-size="10" 
         fill="#000">
-        ${placed.part.part}${placed.part.instanceNum > 1 ? ` #${placed.part.instanceNum}` : ''}
+        ${placed.part.part}${placed.part.instanceNum > 1 ? ` #${placed.part.instanceNum}` : ""}
       </text>`;
       svg += `<text x="${labelX}" y="${labelY + 12}" 
         text-anchor="middle" 
@@ -292,7 +311,7 @@ export function generateNestingSVG(sheetLayout, material) {
     });
   });
 
-  svg += '</svg>';
+  svg += "</svg>";
   return svg;
 }
 
