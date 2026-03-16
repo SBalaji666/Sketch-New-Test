@@ -5,32 +5,31 @@ import {
   HINGES,
   SHELF_SYSTEMS,
   PLINTH_SYSTEMS,
+  DOOR_OVERLAY_TYPES,
+  CONSTRUCTION_TYPES,
 } from "../data/constants.js";
 import { THEMES } from "../data/themes.js";
 
-export default function ConfigPanel(props) {
-  const {
-    overall,
-    setOverall,
-    materials,
-    setMaterials,
-    tolerances,
-    setTolerances,
-    hardware,
-    setHardware,
-    sections,
-    addSection,
-    removeSection,
-    updateSection,
-    themeKey,
-    setThemeKey,
-    drawingView,
-    setDrawingView,
-    mainTab,
-    totalMm,
-    ui,
-  } = props;
-
+export default function ConfigPanel({
+  overall,
+  setOverall,
+  materials,
+  setMaterials,
+  tolerances,
+  setTolerances,
+  hardware,
+  setHardware,
+  sections,
+  addSection,
+  removeSection,
+  updateSection,
+  themeKey,
+  setThemeKey,
+  mainTab,
+  totalMm,
+  warnings,
+  ui,
+}) {
   const inputStyle = {
     display: "block",
     width: "100%",
@@ -42,6 +41,7 @@ export default function ConfigPanel(props) {
     fontFamily: "inherit",
     fontSize: 11,
     marginTop: 3,
+    boxSizing: "border-box",
   };
 
   const sectionStyle = {
@@ -73,24 +73,25 @@ export default function ConfigPanel(props) {
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        maxHeight: "85vh",
+        maxHeight: "90vh",
         overflowY: "auto",
         paddingRight: 4,
       }}
     >
-      {/* Overall dimensions */}
+      {/* Dimensions */}
       <div style={sectionStyle}>
         <div style={headerStyle}>DIMENSIONS</div>
         {[
-          ["Length", "length"],
-          ["Height", "height"],
-          ["Depth", "depth"],
-        ].map(([lbl, key]) => (
+          ["Length", "length", 100, 6000],
+          ["Height", "height", 200, 3000],
+          ["Depth", "depth", 200, 900],
+        ].map(([lbl, key, mn, mx]) => (
           <label key={key} style={labelStyle}>
             {lbl} (mm)
             <input
               type="number"
-              min={100}
+              min={mn}
+              max={mx}
               value={overall[key]}
               onChange={(e) =>
                 setOverall((o) => ({ ...o, [key]: Number(e.target.value) }))
@@ -132,6 +133,42 @@ export default function ConfigPanel(props) {
         </div>
       </div>
 
+      {/* Tolerances */}
+      <div style={sectionStyle}>
+        <div style={headerStyle}>TOLERANCES (mm)</div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr",
+            gap: 6,
+          }}
+        >
+          {[
+            ["Door Gap", "doorGap"],
+            ["Edge Band", "edgeBanding"],
+            ["Saw Kerf", "sawKerf"],
+          ].map(([lbl, key]) => (
+            <label key={key} style={labelStyle}>
+              {lbl}
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={0.5}
+                value={tolerances[key]}
+                onChange={(e) =>
+                  setTolerances((t) => ({
+                    ...t,
+                    [key]: Number(e.target.value),
+                  }))
+                }
+                style={inputStyle}
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+
       {/* Hardware */}
       <div style={sectionStyle}>
         <div style={headerStyle}>HARDWARE</div>
@@ -145,6 +182,14 @@ export default function ConfigPanel(props) {
             })),
           ],
           [
+            "Door Overlay",
+            "doorOverlay",
+            Object.keys(DOOR_OVERLAY_TYPES).map((k) => ({
+              v: k,
+              l: DOOR_OVERLAY_TYPES[k].name,
+            })),
+          ],
+          [
             "Hinge",
             "hinge",
             Object.keys(HINGES).map((k) => ({ v: k, l: HINGES[k].model })),
@@ -154,7 +199,7 @@ export default function ConfigPanel(props) {
             "drawerSlide",
             Object.keys(DRAWER_SLIDES).map((k) => ({
               v: k,
-              l: DRAWER_SLIDES[k].model,
+              l: `${DRAWER_SLIDES[k].brand} ${DRAWER_SLIDES[k].model}`,
             })),
           ],
           [
@@ -171,6 +216,14 @@ export default function ConfigPanel(props) {
             Object.keys(PLINTH_SYSTEMS).map((k) => ({
               v: k,
               l: PLINTH_SYSTEMS[k].name,
+            })),
+          ],
+          [
+            "Construction",
+            "construction",
+            Object.keys(CONSTRUCTION_TYPES).map((k) => ({
+              v: k,
+              l: CONSTRUCTION_TYPES[k].name,
             })),
           ],
         ].map(([lbl, key, opts]) => (
@@ -193,39 +246,26 @@ export default function ConfigPanel(props) {
         ))}
       </div>
 
-      {/* Theme (only for drawing tab) */}
-      {mainTab === "drawing" && (
-        <div style={sectionStyle}>
-          <div style={headerStyle}>VIEW OPTIONS</div>
-          <label style={labelStyle}>
-            Drawing View
-            <select
-              value={drawingView}
-              onChange={(e) => setDrawingView(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="3d">3D Isometric</option>
-              <option value="elevation">Front Elevation</option>
-            </select>
-          </label>
-          <label style={labelStyle}>
-            Theme
-            <select
-              value={themeKey}
-              onChange={(e) => setThemeKey(e.target.value)}
-              style={inputStyle}
-            >
-              {Object.keys(THEMES).map((k) => (
-                <option key={k} value={k}>
-                  {THEMES[k].name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      )}
+      {/* Theme */}
+      <div style={sectionStyle}>
+        <div style={headerStyle}>APPEARANCE</div>
+        <label style={labelStyle}>
+          Theme
+          <select
+            value={themeKey}
+            onChange={(e) => setThemeKey(e.target.value)}
+            style={inputStyle}
+          >
+            {Object.keys(THEMES).map((k) => (
+              <option key={k} value={k}>
+                {THEMES[k].name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
 
-      {/* Sections - FULL VERSION */}
+      {/* Sections */}
       <div style={sectionStyle}>
         <div
           style={{
@@ -253,14 +293,35 @@ export default function ConfigPanel(props) {
             + Add
           </button>
         </div>
+
         <div style={{ fontSize: 9, color: ui.muted, marginBottom: 10 }}>
-          {sections.length} sections · {totalMm}mm{" "}
-          {totalMm !== overall.length && `→ scaled to ${overall.length}mm`}
+          {sections.length} section{sections.length !== 1 ? "s" : ""} ·{" "}
+          {totalMm} mm raw
+          {totalMm !== overall.length && ` → scaled to ${overall.length} mm`}
         </div>
+
+        {/* Duplicate label warning */}
+        {warnings.some((w) => w.includes("Duplicate section label")) && (
+          <div
+            style={{
+              fontSize: 9,
+              color: "#92400e",
+              background: "#fef3c7",
+              borderRadius: 5,
+              padding: "5px 8px",
+              marginBottom: 8,
+            }}
+          >
+            ⚠ Duplicate section labels detected — rename to avoid ambiguity in
+            cut list.
+          </div>
+        )}
+
         <div style={{ maxHeight: 420, overflowY: "auto", paddingRight: 4 }}>
           {sections.map((s) => (
             <div
               key={s.id}
+              id={`section-${s.id}`}
               style={{
                 background: ui.panel,
                 border: `1px solid ${ui.border}`,
@@ -269,7 +330,7 @@ export default function ConfigPanel(props) {
                 marginBottom: 8,
               }}
             >
-              {/* Header with label and remove button */}
+              {/* Label + remove */}
               <div
                 style={{
                   display: "flex",
@@ -311,7 +372,7 @@ export default function ConfigPanel(props) {
                 </button>
               </div>
 
-              {/* Width and Type row */}
+              {/* Width + Type */}
               <div
                 style={{
                   display: "grid",
@@ -370,7 +431,7 @@ export default function ConfigPanel(props) {
                 />
               </label>
 
-              {/* Drawers section */}
+              {/* Drawers */}
               <div
                 style={{
                   background: ui.bg,

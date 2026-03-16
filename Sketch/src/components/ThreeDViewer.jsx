@@ -26,14 +26,15 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
     );
 
     return () => {
-      if (rendererRef.current) {
-        rendererRef.current.dispose();
-      }
       if (containerRef.current) {
         containerRef.current.removeEventListener(
           "sectionselected",
           handleSectionSelect,
         );
+      }
+      if (rendererRef.current) {
+        rendererRef.current.dispose();
+        rendererRef.current = null;
       }
     };
   }, []);
@@ -77,7 +78,7 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
       default:
         const maxDim = Math.max(L, H, D);
         const distance = maxDim * 1.8;
-        camera.position.set(distance, distance * 0.7, distance);
+        camera.position.set(-distance * 0.4, H * 0.8, distance * 0.8);
         controls.target.set(0, H / 2, 0);
         break;
     }

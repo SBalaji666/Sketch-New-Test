@@ -212,12 +212,22 @@ export function optimizeSheetLayout(parts, sawKerf = 3) {
       }
     });
 
+    // Area-weighted efficiency: weight each sheet by used area so a nearly-empty
+    // last sheet does not disproportionately drag down the average.
+    const totalSheetArea = sheets.length * sheetSpec.width * sheetSpec.height;
+    const totalUsedArea = sheets.reduce(
+      (sum, s) =>
+        sum + s.placedParts.reduce((a, p) => a + p.width * p.height, 0),
+      0,
+    );
+    const weightedEfficiency =
+      totalSheetArea > 0 ? (totalUsedArea / totalSheetArea) * 100 : 0;
+
     results[material] = {
       sheets,
       totalSheets: sheets.length,
       totalParts: materialParts.length,
-      averageEfficiency:
-        sheets.reduce((sum, s) => sum + s.efficiency, 0) / sheets.length,
+      averageEfficiency: Math.round(weightedEfficiency * 10) / 10,
       totalCost: sheets.length * sheetSpec.cost,
       sheetSpec,
     };

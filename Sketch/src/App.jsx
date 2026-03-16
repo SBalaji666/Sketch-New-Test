@@ -1,14 +1,16 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { THEMES } from "./data/themes.js";
 import { DEFAULTS } from "./data/constants.js";
 import {
   generateCutList,
   generateHardwareSchedule,
   generateMachiningSchedule,
+  validateConfig,
 } from "./utils/cutListEngine.js";
 import {
   optimizeSheetLayout,
   calculateMaterialCost,
+  generateNestingSVG,
 } from "./utils/sheetOptimizer.js";
 import ThreeDViewer from "./components/ThreeDViewer.jsx";
 import CutListTable from "./components/CutListTable.jsx";
@@ -19,10 +21,11 @@ import ConfigPanel from "./components/ConfigPanel.jsx";
 
 const FONT = "'IBM Plex Mono', 'Courier New', monospace";
 
-let _nextSectionId = 6;
-
 export default function App() {
-  // ── State ──────────────────────────────────────────────────────────────────
+  // Section ID counter — useRef so it survives hot reloads without stale closures
+  const nextSectionId = useRef(8);
+
+  // ── State ─────────────────────────────────────────────────────────────────
   const [overall, setOverall] = useState(DEFAULTS.overall);
   const [materials, setMaterials] = useState(DEFAULTS.materials);
   const [tolerances, setTolerances] = useState(DEFAULTS.tolerances);
@@ -37,6 +40,7 @@ export default function App() {
     edgeBanding: DEFAULTS.edgeBanding,
   });
 
+  // FIXED: Duplicate 'S7' label corrected — last section is now 'S8'
   const [sections, setSections] = useState([
     {
       id: 1,
@@ -64,7 +68,7 @@ export default function App() {
     },
     {
       id: 4,
-      label: "S5",
+      label: "S4",
       width: 300,
       type: "open",
       shelves: 4,
@@ -72,7 +76,7 @@ export default function App() {
     },
     {
       id: 5,
-      label: "S6",
+      label: "S5",
       width: 500,
       type: "closed",
       shelves: 2,
@@ -80,7 +84,7 @@ export default function App() {
     },
     {
       id: 6,
-      label: "S7",
+      label: "S6",
       width: 500,
       type: "closed",
       shelves: 2,
@@ -97,13 +101,13 @@ export default function App() {
   ]);
 
   const [themeKey, setThemeKey] = useState("technical");
-  const [mainTab, setMainTab] = useState("3d-view"); // 3d-view | cutlist | optimization | hardware | machining
+  const [mainTab, setMainTab] = useState("3d-view");
   const [selectedSection, setSelectedSection] = useState(null);
 
   const theme = THEMES[themeKey];
   const ui = theme.ui;
 
-  // ── Build configuration object ─────────────────────────────────────────────
+  // ── Config object ──────────────────────────────────────────────────────────
   const config = useMemo(
     () => ({
       overall,
@@ -115,7 +119,10 @@ export default function App() {
     [overall, materials, tolerances, sections, hardware],
   );
 
-  // ── Generate all outputs ───────────────────────────────────────────────────
+  // ── Validation warnings ───────────────────────────────────────────────────
+  const warnings = useMemo(() => validateConfig(config), [config]);
+
+  // ── Generate all outputs ──────────────────────────────────────────────────
   const cutList = useMemo(() => generateCutList(config), [config]);
   const hardwareSchedule = useMemo(
     () => generateHardwareSchedule(config),
@@ -134,8 +141,28 @@ export default function App() {
     [sheetLayout],
   );
 
-  // ── Export functions ───────────────────────────────────────────────────────
-  const downloadCSV = () => {
+  // ── Stats ─────────────────────────────────────────────────────────────────
+  const stats = useMemo(() => {
+    const sheetValues = Object.values(sheetLayout);
+    const avgEff =
+      sheetValues.length > 0
+        ? sheetValues.reduce((sum, l) => sum + l.averageEfficiency, 0) /
+          sheetValues.length
+        : 0;
+    return {
+      totalParts: cutList.reduce((a, p) => a + p.qty, 0),
+      uniqueParts: cutList.length,
+      totalSheets: sheetValues.reduce((a, l) => a + l.totalSheets, 0),
+      materialCost: materialCost.totalCost,
+      hardwareCost: hardwareSchedule.reduce((a, h) => a + h.totalCost, 0),
+      avgEfficiency: Math.round(avgEff),
+    };
+  }, [cutList, sheetLayout, materialCost, hardwareSchedule]);
+
+  const totalMm = sections.reduce((a, s) => a + s.width, 0);
+
+  // ── Export CSV ────────────────────────────────────────────────────────────
+  const downloadCSV = (filter, searchTerm) => {
     const headers = [
       "#",
       "Part",
@@ -151,23 +178,32 @@ export default function App() {
       "Hardware",
       "Notes",
     ];
-    const rows = cutList.map((p) => [
-      p.id,
-      p.part,
-      p.section,
-      p.material,
-      p.qty,
-      Math.round(p.length),
-      Math.round(p.width),
-      p.thickness,
-      p.grain,
-      p.edgeBand,
-      p.machining || "",
-      p.hardware || "",
-      p.note,
-    ]);
+    const rows = cutList
+      .filter((p) => {
+        const matchesFilter = filter === "All" || p.material === filter;
+        const matchesSearch =
+          !searchTerm ||
+          p.part?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          p.section?.toLowerCase().includes(searchTerm.toLowerCase());
+        return matchesFilter && matchesSearch;
+      })
+      .map((p) => [
+        p.id,
+        p.part,
+        p.section,
+        p.material,
+        p.qty,
+        Math.round(p.length),
+        Math.round(p.width),
+        p.thickness,
+        p.grain,
+        p.edgeBand,
+        p.machining || "",
+        p.hardware || "",
+        p.note,
+      ]);
     const csv = [headers, ...rows]
-      .map((r) => r.map((v) => `"${v}"`).join(","))
+      .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
       .join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const a = document.createElement("a");
@@ -176,13 +212,25 @@ export default function App() {
     a.click();
   };
 
-  // ── Section management ─────────────────────────────────────────────────────
+  // ── Export nesting SVG ────────────────────────────────────────────────────
+  const downloadNestingSVG = (material) => {
+    const svg = generateNestingSVG(sheetLayout, material);
+    if (!svg) return;
+    const blob = new Blob([svg], { type: "image/svg+xml" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `nesting_${material.replace(/\s+/g, "_")}.svg`;
+    a.click();
+  };
+
+  // ── Section management ────────────────────────────────────────────────────
   const addSection = () => {
+    const newId = nextSectionId.current++;
     setSections((prev) => [
       ...prev,
       {
-        id: _nextSectionId++,
-        label: `S${_nextSectionId - 1}`,
+        id: newId,
+        label: `S${newId}`,
         width: 350,
         type: "closed",
         shelves: 2,
@@ -196,38 +244,10 @@ export default function App() {
   const updateSection = (updated) =>
     setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
 
-  // ── Stats ──────────────────────────────────────────────────────────────────
-  const stats = useMemo(
-    () => ({
-      totalParts: cutList.reduce((a, p) => a + p.qty, 0),
-      uniqueParts: cutList.length,
-      totalSheets: Object.values(sheetLayout).reduce(
-        (a, l) => a + l.totalSheets,
-        0,
-      ),
-      materialCost: materialCost.totalCost,
-      hardwareCost: hardwareSchedule.reduce((a, h) => a + h.totalCost, 0),
-      avgEfficiency:
-        Object.values(sheetLayout).reduce(
-          (sum, l) => sum + l.averageEfficiency,
-          0,
-        ) / Object.keys(sheetLayout).length,
-    }),
-    [cutList, sheetLayout, materialCost, hardwareSchedule],
-  );
-
-  const totalMm = sections.reduce((a, s) => a + s.width, 0);
-
-  // ── UI ─────────────────────────────────────────────────────────────────────
-  const containerBg =
-    themeKey === "blueprint"
-      ? "linear-gradient(135deg, #071525 0%, #0d2137 100%)"
-      : themeKey === "workshop"
-        ? "linear-gradient(135deg, #f5efe6 0%, #ece3d5 100%)"
-        : "linear-gradient(135deg, #eef2f8 0%, #f5f7fb 100%)";
-
+  // ── Tab button ────────────────────────────────────────────────────────────
   const tabBtn = (label, key, icon, badge = null) => (
     <button
+      key={key}
       onClick={() => setMainTab(key)}
       style={{
         padding: "9px 18px",
@@ -248,7 +268,7 @@ export default function App() {
     >
       {icon}
       {label}
-      {badge !== null && (
+      {badge !== null && badge > 0 && (
         <span
           style={{
             position: "absolute",
@@ -270,12 +290,16 @@ export default function App() {
 
   const handleSectionSelect = (section) => {
     setSelectedSection(section);
-    // Highlight in config panel
-    const element = document.getElementById(`section-${section.id}`);
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    const el = document.getElementById(`section-${section?.id}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   };
+
+  const containerBg =
+    themeKey === "blueprint"
+      ? "linear-gradient(135deg, #071525 0%, #0d2137 100%)"
+      : themeKey === "workshop"
+        ? "linear-gradient(135deg, #f5efe6 0%, #ece3d5 100%)"
+        : "linear-gradient(135deg, #eef2f8 0%, #f5f7fb 100%)";
 
   return (
     <div
@@ -321,12 +345,12 @@ export default function App() {
             Cabinet Designer 3D
           </h1>
           <div style={{ fontSize: 10, color: ui.muted, marginTop: 3 }}>
-            3D Designer · {stats.totalParts} parts · {stats.totalSheets} sheets
-            · £{Math.round(stats.materialCost + stats.hardwareCost)} total
+            {stats.totalParts} parts · {stats.totalSheets} sheets · £
+            {Math.round(stats.materialCost + stats.hardwareCost)} total ·{" "}
+            {stats.avgEfficiency}% sheet efficiency
           </div>
         </div>
 
-        {/* Tab navigation */}
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
           {tabBtn(
             "3D View",
@@ -410,7 +434,42 @@ export default function App() {
         </div>
       </div>
 
-      {/* Main content */}
+      {/* Validation warnings banner */}
+      {warnings.length > 0 && (
+        <div
+          style={{
+            maxWidth: 1400,
+            margin: "0 auto 12px",
+            background: "#fef3c7",
+            border: "1.5px solid #f59e0b",
+            borderRadius: 10,
+            padding: "10px 16px",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "#92400e",
+              marginBottom: 4,
+            }}
+          >
+            ⚠ {warnings.length} Configuration Warning
+            {warnings.length > 1 ? "s" : ""} — resolve before sending to
+            production
+          </div>
+          {warnings.map((w, i) => (
+            <div
+              key={i}
+              style={{ fontSize: 10, color: "#78350f", marginTop: 2 }}
+            >
+              • {w}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Main layout */}
       <div
         style={{
           maxWidth: 1400,
@@ -421,7 +480,6 @@ export default function App() {
           alignItems: "start",
         }}
       >
-        {/* Left: Configuration panel */}
         <ConfigPanel
           overall={overall}
           setOverall={setOverall}
@@ -432,7 +490,6 @@ export default function App() {
           hardware={hardware}
           setHardware={setHardware}
           sections={sections}
-          setSections={setSections}
           addSection={addSection}
           removeSection={removeSection}
           updateSection={updateSection}
@@ -440,10 +497,10 @@ export default function App() {
           setThemeKey={setThemeKey}
           mainTab={mainTab}
           totalMm={totalMm}
+          warnings={warnings}
           ui={ui}
         />
 
-        {/* Right: Main content area */}
         <div
           style={{
             background: ui.bg,
@@ -460,20 +517,17 @@ export default function App() {
               ui={ui}
             />
           )}
-
           {mainTab === "cutlist" && (
             <CutListTable parts={cutList} onExportCSV={downloadCSV} ui={ui} />
           )}
-
           {mainTab === "optimization" && (
             <SheetOptimizationView
               sheetLayout={sheetLayout}
               materialCost={materialCost}
-              onDownloadNesting={() => {}}
+              onDownloadNesting={downloadNestingSVG}
               ui={ui}
             />
           )}
-
           {mainTab === "hardware" && (
             <HardwareSchedule
               schedule={hardwareSchedule}
@@ -481,7 +535,6 @@ export default function App() {
               ui={ui}
             />
           )}
-
           {mainTab === "machining" && (
             <MachiningSchedule
               schedule={machiningSchedule}
@@ -492,7 +545,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* Selected Section Info */}
+      {/* Selected section chip */}
       {selectedSection && (
         <div
           style={{
@@ -509,7 +562,7 @@ export default function App() {
             zIndex: 1000,
           }}
         >
-          Selected: {selectedSection.label} · {selectedSection.width}mm ·{" "}
+          Selected: {selectedSection.label} · {selectedSection.width} mm ·{" "}
           {selectedSection.type}
           <button
             onClick={() => setSelectedSection(null)}

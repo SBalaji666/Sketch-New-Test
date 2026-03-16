@@ -790,7 +790,7 @@ export class CabinetRenderer {
 
   centerCamera(L, H, D) {
     const maxDim = Math.max(L, H, D);
-    const distance = maxDim * 1.4;
+    const distance = maxDim * 1.8;
 
     this.camera.position.set(-distance * 0.4, H * 0.8, distance * 0.8);
     this.controls.target.set(0, H * 0.5, 0);
@@ -803,6 +803,7 @@ export class CabinetRenderer {
   }
 
   animate() {
+    if (this._disposed) return;
     requestAnimationFrame(() => this.animate());
 
     const lerpFactor = 0.1;
@@ -849,14 +850,43 @@ export class CabinetRenderer {
   }
 
   dispose() {
+    // Stop animation loop
+    this._disposed = true;
+
+    // Traverse and dispose all geometries and materials
+    if (this.scene) {
+      this.scene.traverse((obj) => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach((m) => m.dispose());
+          } else {
+            obj.material.dispose();
+          }
+        }
+      });
+    }
+
+    // Dispose dimension lines
+    this.dimensionLines.forEach((line) => {
+      if (line.geometry) line.geometry.dispose();
+      if (line.material) line.material.dispose();
+    });
+
     this.controls.dispose();
     this.renderer.dispose();
+
     if (this.toggleButton && this.container.contains(this.toggleButton)) {
       this.container.removeChild(this.toggleButton);
     }
-    if (this.container.contains(this.renderer.domElement)) {
+    if (
+      this.renderer.domElement &&
+      this.container.contains(this.renderer.domElement)
+    ) {
       this.container.removeChild(this.renderer.domElement);
     }
-    window.removeEventListener("resize", this.onWindowResize);
+
+    window.removeEventListener("resize", () => this.onWindowResize());
+    window.removeEventListener("keydown", () => {});
   }
 }

@@ -8,8 +8,120 @@ import {
   DOOR_OVERLAY_TYPES,
 } from "../data/constants.js";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 /**
- * Production-grade cut list generator with full joinery and hardware logic
+ * Calculate hinge positions using industry-standard Blum layout:
+ * first hinge 100 mm from top edge, last hinge 100 mm from bottom edge,
+ * any extra hinges evenly distributed between them.
+ */
+function hingeLayout(doorHeight, hingeFn) {
+  const count = hingeFn(doorHeight);
+  const positions = [];
+  if (count === 1) {
+    positions.push(doorHeight / 2);
+  } else {
+    positions.push(100);
+    positions.push(doorHeight - 100);
+    for (let i = 1; i < count - 1; i++) {
+      positions.push(Math.round(100 + (i * (doorHeight - 200)) / (count - 1)));
+    }
+    positions.sort((a, b) => a - b);
+  }
+  return { count, positions };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VALIDATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Validate config and return array of warning strings.
+ * Surface these in the UI before generating any production cut list.
+ */
+export function validateConfig(config) {
+  const { overall, materials, sections, hardware } = config;
+  const warnings = [];
+
+  const slide = DRAWER_SLIDES[hardware.drawerSlide];
+  const plinth = PLINTH_SYSTEMS[hardware.plinth] || PLINTH_SYSTEMS.none;
+  const ct = materials.carcass;
+
+  if (overall.depth < 200)
+    warnings.push("Cabinet depth < 200 mm — too shallow for any drawer slide.");
+  if (overall.height - plinth.height < ct * 4)
+    warnings.push("Effective cabinet height is too small for carcass panels.");
+  if (overall.length < ct * 2 + 50)
+    warnings.push("Cabinet length is too narrow.");
+
+  // Detect duplicate labels
+  const seen = new Set();
+  sections.forEach((s) => {
+    if (seen.has(s.label))
+      warnings.push(
+        `Duplicate section label "${s.label}" — labels must be unique.`,
+      );
+    seen.add(s.label);
+  });
+
+  sections.forEach((s) => {
+    if (s.width < 50) warnings.push(`Section ${s.label}: width < 50 mm.`);
+
+    if (s.drawers.count > 0 && slide) {
+      const bt = materials.back;
+      const drawerBoxDepth = clamp(
+        overall.depth - bt - ct - 50,
+        slide.minDepth,
+        slide.maxDepth,
+      );
+      if (drawerBoxDepth < slide.minDepth)
+        warnings.push(
+          `Section ${s.label}: Cabinet depth too small for ${slide.brand} ${slide.model} (min ${slide.minDepth} mm).`,
+        );
+
+      const minH = slide.heights[0];
+      const maxH = slide.heights[slide.heights.length - 1];
+      if (s.drawers.height < minH || s.drawers.height > maxH)
+        warnings.push(
+          `Section ${s.label}: Drawer height ${s.drawers.height} mm outside ${slide.brand} ${slide.model} compatible range (${minH}–${maxH} mm).`,
+        );
+
+      const effectiveHeight = overall.height - plinth.height;
+      const internalHeight = effectiveHeight - ct * 2;
+      const totalStack = s.drawers.count * s.drawers.height;
+      if (totalStack > internalHeight)
+        warnings.push(
+          `Section ${s.label}: Total drawer stack (${totalStack} mm) exceeds internal height (${internalHeight} mm).`,
+        );
+    }
+  });
+
+  return warnings;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN CUT LIST GENERATOR
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Production-grade cut list generator.
+ *
+ * All sizes are RAW (pre-edge-band) panel dimensions as they leave the panel saw.
+ * Edge-band thickness (ebt) is documented in notes where it affects finished size.
+ *
+ * Fixed issues (vs. original):
+ *  Bug 1  — Back panel height: was effectiveHeight, now effectiveHeight - ct*2
+ *  Bug 2  — Plinth side rail: was D - plinth.setback - ct, now D - plinth.setback
+ *  Bug 3  — Interior width: always ct*2 (was ct*1 for end sections — wrong)
+ *  Bug W3 — Section width rounding: last section absorbs remainder
+ *  Bug W2 — Door/drawer face notes now document pre/post edge-band finished sizes
+ *  Bug W4 — Inset door height uses internalHeight, overlay uses effectiveHeight
  */
 export function generateCutList(config) {
   const { overall, materials, tolerances, sections, hardware } = config;
@@ -22,30 +134,28 @@ export function generateCutList(config) {
     drawerSide: dst,
     drawerBottom: dbt,
   } = materials;
-  const { doorGap: dg, edgeBanding: ebt, sawKerf: sk } = tolerances;
+  const { edgeBanding: ebt } = tolerances;
 
   const joinery =
     JOINERY_TYPES[hardware.joinery.toUpperCase()] || JOINERY_TYPES.BUTT;
-  const plinth = PLINTH_SYSTEMS[hardware.plinth] || PLINTH_SYSTEMS.NONE;
-  const shelfSys = SHELF_SYSTEMS[hardware.shelfSystem] || SHELF_SYSTEMS.FIXED;
+  const plinth = PLINTH_SYSTEMS[hardware.plinth] || PLINTH_SYSTEMS.none;
+  const shelfSys = SHELF_SYSTEMS[hardware.shelfSystem] || SHELF_SYSTEMS.fixed;
   const doorOverlay =
-    DOOR_OVERLAY_TYPES[hardware.doorOverlay] || DOOR_OVERLAY_TYPES.FULL;
+    DOOR_OVERLAY_TYPES[hardware.doorOverlay] || DOOR_OVERLAY_TYPES.full;
   const construction =
-    CONSTRUCTION_TYPES[hardware.construction] || CONSTRUCTION_TYPES.ASSEMBLED;
+    CONSTRUCTION_TYPES[hardware.construction] || CONSTRUCTION_TYPES.assembled;
 
   const parts = [];
   let partNum = 1;
+  const add = (part) => parts.push({ ...part, id: partNum++ });
 
-  const add = (part) => {
-    parts.push({ ...part, id: partNum++ });
-  };
-
-  // ── PLINTH CALCULATION ─────────────────────────────────────────────────────
+  // Heights
   const plinthHeight = plinth.height;
-  const effectiveHeight = H - plinthHeight; // Height available for cabinet box
+  const effectiveHeight = H - plinthHeight; // top of plinth → top of cabinet
+  const internalHeight = effectiveHeight - ct * 2; // clear space between top & bottom panels
 
+  // ── 1. PLINTH ─────────────────────────────────────────────────────────────
   if (plinthHeight > 0) {
-    // Plinth front rail
     add({
       part: "Plinth Front Rail",
       section: "Base",
@@ -56,26 +166,25 @@ export function generateCutList(config) {
       thickness: ct,
       grain: "length",
       edgeBand: "top edge",
-      note: `${plinthHeight}mm toe-kick, ${plinth.setback}mm setback`,
+      note: `${plinthHeight} mm toe-kick, ${plinth.setback} mm setback`,
     });
 
-    // Plinth side rails (left & right)
+    // FIXED Bug 2: removed erroneous - ct from length
     add({
       part: "Plinth Side Rail",
       section: "Base",
       material: "Carcass 18mm",
       qty: 2,
-      length: D - plinth.setback - ct,
+      length: D - plinth.setback,
       width: plinthHeight,
       thickness: ct,
       grain: "length",
       edgeBand: "top edge",
-      note: "Side plinth rails",
+      note: "Side plinth rails — abuts outer face of cabinet side panel",
     });
   }
 
-  // ── MAIN CARCASS ───────────────────────────────────────────────────────────
-  // Top Panel: full width × depth (minus back panel thickness)
+  // ── 2. CARCASS ────────────────────────────────────────────────────────────
   add({
     part: "Top Panel",
     section: "Carcass",
@@ -86,13 +195,12 @@ export function generateCutList(config) {
     thickness: ct,
     grain: "length",
     edgeBand: "front edge",
-    note: "Full width top",
+    note: "Full-width top panel",
     machining: joinery.requiresBoring
-      ? "Dowel/cam holes required on underside"
+      ? "Dowel/cam holes on underside at joint positions"
       : "None",
   });
 
-  // Bottom Panel: same as top
   add({
     part: "Bottom Panel",
     section: "Carcass",
@@ -103,14 +211,14 @@ export function generateCutList(config) {
     thickness: ct,
     grain: "length",
     edgeBand: "front edge",
-    note: `Full width bottom, sits on ${plinthHeight}mm plinth`,
+    note: `Full-width bottom — sits on ${plinthHeight} mm plinth`,
     machining: joinery.requiresBoring
-      ? "Dowel/cam holes required on topside"
+      ? "Dowel/cam holes on topside at joint positions"
       : "None",
   });
 
-  // Left & Right Sides
-  const sideHeight = effectiveHeight - ct * 2; // Height minus top & bottom
+  const sideHeight = internalHeight; // side panels fit between top & bottom
+
   add({
     part: "Left Side Panel",
     section: "Carcass",
@@ -124,9 +232,9 @@ export function generateCutList(config) {
     note: "Left outer side",
     machining:
       joinery.id === "dado"
-        ? "Dado grooves for dividers"
+        ? "Dado grooves for dividers & fixed shelves"
         : joinery.requiresBoring
-          ? "Boring for joinery"
+          ? `Boring for ${joinery.name}`
           : "None",
   });
 
@@ -143,77 +251,91 @@ export function generateCutList(config) {
     note: "Right outer side",
     machining:
       joinery.id === "dado"
-        ? "Dado grooves for dividers"
+        ? "Dado grooves for dividers & fixed shelves"
         : joinery.requiresBoring
-          ? "Boring for joinery"
+          ? `Boring for ${joinery.name}`
           : "None",
   });
 
-  // Back Panel
+  // FIXED Bug 1: Back panel height was effectiveHeight (too tall by ct*2 = 36 mm).
+  // It must be internalHeight so it sits flush inside the box.
   add({
     part: "Back Panel",
     section: "Carcass",
     material: "Back Panel 9mm",
     qty: 1,
     length: L - ct * 2,
-    width: effectiveHeight,
+    width: internalHeight, // = effectiveHeight - ct*2
     thickness: bt,
     grain: "height",
     edgeBand: "none",
-    note: "Full back panel, sits in rabbet",
+    note: "Back panel — fits flush inside carcass box (between top/bottom/sides)",
   });
 
-  // ── VERTICAL DIVIDERS ──────────────────────────────────────────────────────
+  // ── 3. VERTICAL DIVIDERS ─────────────────────────────────────────────────
   const dividerCount = sections.length - 1;
   if (dividerCount > 0) {
-    const dividerHeight = sideHeight - joinery.dividerReduction;
     add({
       part: "Vertical Divider",
       section: "Carcass",
       material: "Carcass 18mm",
       qty: dividerCount,
-      length: dividerHeight,
+      length: sideHeight,
       width: D - bt,
       thickness: ct,
       grain: "height",
       edgeBand: "front edge",
-      note: `${dividerCount} internal dividers, ${joinery.name}`,
+      note: `${dividerCount} internal dividers — ${joinery.name}`,
       machining: joinery.requiresBoring
         ? `Boring for ${joinery.name}`
         : joinery.id === "dado"
           ? "Sits in dado groove"
-          : "Butt joint",
+          : "Butt joint — glue & screw",
     });
   }
 
-  // ── SECTION-SPECIFIC PARTS ─────────────────────────────────────────────────
-  // Normalize section widths to actual cabinet length
+  // ── 4. SECTION PARTS ──────────────────────────────────────────────────────
+
+  // Normalise widths — FIXED Bug W3: last section absorbs rounding remainder.
   const totalW = sections.reduce((a, s) => a + s.width, 0) || 1;
-  const normSections = sections.map((s) => ({
-    ...s,
-    _actualWidth: Math.round((s.width / totalW) * L),
-  }));
+  let remainingL = L;
+  const normSections = sections.map((s, i) => {
+    if (i === sections.length - 1) return { ...s, _actualWidth: remainingL };
+    const w = Math.round((s.width / totalW) * L);
+    remainingL -= w;
+    return { ...s, _actualWidth: w };
+  });
 
-  normSections.forEach((section, idx) => {
-    const sectionWidth = section._actualWidth;
-    const isFirstSection = idx === 0;
-    const isLastSection = idx === normSections.length - 1;
+  const gapPerSide = doorOverlay.gapPerSide;
 
-    // Interior width = section width minus one panel thickness per side
-    // (first & last share wall with outer sides, internal sections have dividers)
-    const interiorWidth =
-      sectionWidth - ct * (isFirstSection || isLastSection ? 1 : 2);
-    const interiorHeight = sideHeight;
+  normSections.forEach((section) => {
+    const sw = section._actualWidth;
+
+    // FIXED Bug 3: always ct*2 — each section is bounded by a ct-thick panel on each side.
+    const interiorWidth = sw - ct * 2;
     const interiorDepth = D - bt - ct;
 
-    // ── DOORS ──
+    // ── DOORS ────────────────────────────────────────────────────────────────
     if (section.type === "closed") {
       const hinge = HINGES[hardware.hinge] || HINGES["blum-clip-top-110"];
-      const doorWidth = sectionWidth - doorOverlay.gapPerSide * 2;
-      const doorHeight = effectiveHeight - doorOverlay.gapPerSide * 2;
+
+      // FIXED Bug W4: inset doors size against internalHeight; overlay against effectiveHeight
+      const doorWidth =
+        doorOverlay.id === "inset"
+          ? interiorWidth - gapPerSide * 2
+          : sw - gapPerSide * 2;
+      const doorHeight =
+        doorOverlay.id === "inset"
+          ? internalHeight - gapPerSide * 2
+          : effectiveHeight - gapPerSide * 2;
+
+      const { count: hingeCount } = hingeLayout(
+        doorHeight,
+        hinge.hingesPerDoor,
+      );
 
       add({
-        part: `Door Panel`,
+        part: "Door Panel",
         section: section.label,
         material: "Door 18mm",
         qty: 1,
@@ -222,19 +344,20 @@ export function generateCutList(config) {
         thickness: dt,
         grain: "height",
         edgeBand: "all 4 edges",
-        note: `${section.label} ${doorOverlay.name} door`,
-        machining: `Hinge cup boring: ${hinge.cupDiameter}mm × ${hinge.cupDepth}mm deep`,
-        hardware: `${hinge.brand} ${hinge.model} × ${hinge.hingesPerDoor(doorHeight)} pcs`,
+        // FIXED Bug W2: documents pre-band and post-band sizes clearly
+        note: `${section.label} — ${doorOverlay.name} door. Pre-band: ${doorHeight}×${doorWidth} mm. Post-band: ${doorHeight + ebt * 2}×${doorWidth + ebt * 2} mm`,
+        machining: `Hinge cup: ⌀${hinge.cupDiameter} mm × ${hinge.cupDepth} mm deep, ${hinge.boringDistance} mm from hinge edge. 100 mm from top/bottom (Blum std).`,
+        hardware: `${hinge.brand} ${hinge.model} × ${hingeCount} pcs`,
       });
     }
 
-    // ── SHELVES ──
+    // ── SHELVES ───────────────────────────────────────────────────────────────
     if (section.shelves > 0) {
       const shelfWidth = interiorWidth - shelfSys.clearance * 2 - ebt * 2;
       const shelfDepth = interiorDepth - shelfSys.clearance - ebt;
 
       add({
-        part: `Shelf`,
+        part: "Shelf",
         section: section.label,
         material: "Shelf 18mm",
         qty: section.shelves,
@@ -243,89 +366,94 @@ export function generateCutList(config) {
         thickness: sht,
         grain: "width",
         edgeBand: "front edge",
-        note: `${section.label} ${shelfSys.adjustable ? "adjustable" : "fixed"} shelves`,
+        note: `${section.label} — ${shelfSys.adjustable ? "adjustable" : "fixed"} shelf × ${section.shelves}`,
         machining:
-          shelfSys.id === "fixed" ? "Dado into sides or screwed" : "None",
+          shelfSys.id === "fixed"
+            ? "Dado into sides or screwed from outside"
+            : "None",
         hardware: shelfSys.adjustable
           ? `${shelfSys.name} × ${shelfSys.pinsPerShelf} per shelf`
           : "None",
       });
-
-      // Add shelf pin holes to side panels (if adjustable)
-      if (shelfSys.adjustable) {
-        // This would be added to a separate machining schedule, not the cut list
-      }
     }
 
-    // ── DRAWERS ──
+    // ── DRAWERS ───────────────────────────────────────────────────────────────
     const drawerCount = section.drawers.count;
     if (drawerCount > 0) {
       const slide =
         DRAWER_SLIDES[hardware.drawerSlide] || DRAWER_SLIDES["blum-tandem-550"];
       const drawerHeight = section.drawers.height;
 
-      // Check if drawer height is compatible with selected slide
-      const slideCompatible =
-        slide.heights[0] <= drawerHeight &&
-        drawerHeight <= slide.heights[slide.heights.length - 1];
-
-      const drawerBoxWidth =
+      // Outer width of the assembled drawer box (side-to-side)
+      const drawerBoxOuterWidth =
         interiorWidth - slide.clearancePerSide * 2 - ebt * 2;
-      const drawerBoxDepth = Math.min(interiorDepth - 50, slide.maxDepth); // 50mm setback for slides
-      const drawerFaceWidth = sectionWidth - doorOverlay.gapPerSide * 2;
-      const drawerFaceHeight = drawerHeight - doorOverlay.gapPerSide;
 
-      // Drawer box sides (left & right per drawer)
+      // Depth capped at slide spec with 50 mm setback for rear bracket
+      const drawerBoxDepth = clamp(
+        interiorDepth - 50,
+        slide.minDepth,
+        slide.maxDepth,
+      );
+
+      // Drawer side panels
+      const drawerBoxSideHeight = drawerHeight - dbt;
       add({
-        part: `Drawer Box Side`,
+        part: "Drawer Box Side",
         section: section.label,
         material: "Drawer Side 12mm",
         qty: drawerCount * 2,
         length: drawerBoxDepth,
-        width: drawerHeight - dbt,
+        width: drawerBoxSideHeight,
         thickness: dst,
         grain: "length",
         edgeBand: "top edge",
-        note: `${section.label} drawer sides (×2 per drawer)`,
+        note: `${section.label} — drawer sides (×2 per drawer × ${drawerCount} drawers)`,
         machining: construction.requiresCamLocks
-          ? "Cam lock boring"
-          : "Groove for bottom panel",
+          ? "Cam lock boring on front/back ends"
+          : "Groove for bottom panel, 6 mm from bottom edge",
       });
 
-      // Drawer box front & back
+      // Drawer front & back panels — fit BETWEEN the two side panels
+      const drawerFrontBackLength = drawerBoxOuterWidth - dst * 2;
       add({
-        part: `Drawer Box Front/Back`,
+        part: "Drawer Box Front/Back",
         section: section.label,
         material: "Drawer Side 12mm",
         qty: drawerCount * 2,
-        length: drawerBoxWidth - dst * 2,
-        width: drawerHeight - dbt,
+        length: drawerFrontBackLength,
+        width: drawerBoxSideHeight,
         thickness: dst,
         grain: "length",
         edgeBand: "top edge",
-        note: `${section.label} drawer front & back panels`,
+        note: `${section.label} — drawer F/B (×2 per drawer × ${drawerCount}). Fits between side panels.`,
         machining: construction.requiresCamLocks
           ? "Cam lock boring"
-          : "Groove for bottom panel",
+          : "Groove for bottom panel, 6 mm from bottom edge",
       });
 
-      // Drawer bottom
+      // Drawer bottom panel
       add({
-        part: `Drawer Bottom`,
+        part: "Drawer Bottom",
         section: section.label,
         material: "Drawer Bottom 6mm",
         qty: drawerCount,
         length: drawerBoxDepth - 10,
-        width: drawerBoxWidth - dst * 2,
+        width: drawerBoxOuterWidth - dst * 2,
         thickness: dbt,
         grain: "length",
         edgeBand: "none",
-        note: `${section.label} drawer base`,
+        note: `${section.label} — drawer base. Slides into 6 mm groove.`,
       });
 
       // Drawer face (decorative front)
+      const drawerFaceWidth =
+        doorOverlay.id === "inset"
+          ? interiorWidth - gapPerSide * 2
+          : sw - gapPerSide * 2;
+      const drawerFaceHeight = drawerHeight - gapPerSide;
+
       add({
-        part: `Drawer Face`,
+        part: "Drawer Face",
         section: section.label,
         material: "Drawer Face 18mm",
         qty: drawerCount,
@@ -334,8 +462,8 @@ export function generateCutList(config) {
         thickness: dt,
         grain: "height",
         edgeBand: "all 4 edges",
-        note: `${section.label} decorative drawer front`,
-        machining: "Handle drilling as per template",
+        note: `${section.label} — drawer front. Pre-band: ${drawerFaceHeight}×${drawerFaceWidth} mm. Post-band: ${drawerFaceHeight + ebt * 2}×${drawerFaceWidth + ebt * 2} mm`,
+        machining: "Handle drilling per template",
         hardware: `${slide.brand} ${slide.model} × ${drawerCount} sets`,
       });
     }
@@ -344,34 +472,57 @@ export function generateCutList(config) {
   return parts;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HARDWARE SCHEDULE
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Hardware schedule generator
+ * Hardware bill-of-materials.
+ * FIXED Bug H1: All closed sections get hinges (not just those without drawers).
+ * FIXED Bug H2: Handle/pull line item now included.
  */
 export function generateHardwareSchedule(config) {
-  const { sections, hardware, overall } = config;
+  const { sections, hardware, overall, materials, tolerances } = config;
   const schedule = [];
 
   const hinge = HINGES[hardware.hinge];
   const slide = DRAWER_SLIDES[hardware.drawerSlide];
   const shelfSys = SHELF_SYSTEMS[hardware.shelfSystem];
+  const plinth = PLINTH_SYSTEMS[hardware.plinth] || PLINTH_SYSTEMS.none;
+  const doorOverlay =
+    DOOR_OVERLAY_TYPES[hardware.doorOverlay] || DOOR_OVERLAY_TYPES.full;
+  const construction = CONSTRUCTION_TYPES[hardware.construction];
+  const ct = materials.carcass;
+  const ebt = tolerances.edgeBanding;
 
-  // Count doors
-  const doorCount = sections.filter(
-    (s) => s.type === "closed" && s.drawers.count === 0,
-  ).length;
-  if (doorCount > 0 && hinge) {
-    const hingesPerDoor = hinge.hingesPerDoor(overall.height);
+  const effectiveHeight = overall.height - plinth.height;
+  const internalHeight = effectiveHeight - ct * 2;
+
+  // Hinges — ALL closed sections get a door, regardless of drawer presence
+  const closedSections = sections.filter((s) => s.type === "closed");
+  if (closedSections.length > 0 && hinge) {
+    const doorHeight =
+      doorOverlay.id === "inset"
+        ? internalHeight - doorOverlay.gapPerSide * 2
+        : effectiveHeight - doorOverlay.gapPerSide * 2;
+
+    const { count: hingesPerDoor } = hingeLayout(
+      doorHeight,
+      hinge.hingesPerDoor,
+    );
+    const total = closedSections.length * hingesPerDoor;
+
     schedule.push({
       category: "Hinges",
       item: `${hinge.brand} ${hinge.model}`,
-      qty: doorCount * hingesPerDoor,
+      qty: total,
       unitCost: hinge.cost,
-      totalCost: doorCount * hingesPerDoor * hinge.cost,
-      note: `${hingesPerDoor} hinges per door`,
+      totalCost: total * hinge.cost,
+      note: `${hingesPerDoor} hinges/door × ${closedSections.length} doors. Blum std: 100 mm from ends.`,
     });
   }
 
-  // Count drawer slides
+  // Drawer slides
   const totalDrawers = sections.reduce((sum, s) => sum + s.drawers.count, 0);
   if (totalDrawers > 0 && slide) {
     schedule.push({
@@ -380,87 +531,133 @@ export function generateHardwareSchedule(config) {
       qty: totalDrawers,
       unitCost: slide.cost,
       totalCost: totalDrawers * slide.cost,
-      note: `${slide.type} slides`,
+      note: `${slide.type} slides, max load ${slide.maxLoad} kg`,
     });
   }
 
-  // Count shelf pins
+  // Shelf pins
   const totalShelves = sections.reduce((sum, s) => sum + s.shelves, 0);
   if (totalShelves > 0 && shelfSys.adjustable) {
-    const pinsNeeded = totalShelves * shelfSys.pinsPerShelf;
+    const pins = totalShelves * shelfSys.pinsPerShelf;
     schedule.push({
       category: "Shelf Hardware",
-      item: `${shelfSys.name}`,
-      qty: pinsNeeded,
+      item: shelfSys.name,
+      qty: pins,
       unitCost: shelfSys.cost,
-      totalCost: pinsNeeded * shelfSys.cost,
-      note: `${shelfSys.pinsPerShelf} pins per shelf`,
+      totalCost: pins * shelfSys.cost,
+      note: `${shelfSys.pinsPerShelf} pins/shelf × ${totalShelves} shelves`,
+    });
+  }
+
+  // Handles / pulls — one per door + one per drawer face
+  const handleQty = closedSections.length + totalDrawers;
+  if (handleQty > 0) {
+    schedule.push({
+      category: "Handles / Pulls",
+      item: "Bar handle (specify model & finish)",
+      qty: handleQty,
+      unitCost: 0,
+      totalCost: 0,
+      note: `${closedSections.length} door + ${totalDrawers} drawer handles. Unit cost TBC.`,
+    });
+  }
+
+  // Cam locks (flat-pack)
+  if (construction?.requiresCamLocks) {
+    const dividerCount = sections.length - 1;
+    const camQty = (4 + dividerCount * 2) * 2;
+    schedule.push({
+      category: "Cam Locks (RTA)",
+      item: "Minifix / Rafix 15 mm cam lock",
+      qty: camQty,
+      unitCost: 0.45,
+      totalCost: camQty * 0.45,
+      note: `Flat-pack assembly. Approx ${camQty} sets.`,
     });
   }
 
   return schedule;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MACHINING SCHEDULE
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Machining/boring schedule generator
+ * CNC boring / drilling schedule.
+ * FIXED Bug H3: Shelf pin holes only target Left/Right Side Panel and Vertical Divider.
+ * FIXED Bug H4: Hinge positions use Blum standard (100 mm from door ends).
  */
 export function generateMachiningSchedule(cutList, config) {
-  const { hardware, overall } = config;
+  const { hardware, materials, tolerances } = config;
   const hinge = HINGES[hardware.hinge];
   const shelfSys = SHELF_SYSTEMS[hardware.shelfSystem];
   const joinery = JOINERY_TYPES[hardware.joinery.toUpperCase()];
 
   const machining = [];
 
-  // Hinge boring for doors
+  // 1. Hinge cup boring
   const doors = cutList.filter((p) => p.part === "Door Panel");
   doors.forEach((door) => {
-    if (hinge) {
-      const hingeCount = hinge.hingesPerDoor(door.length);
-      const spacing = door.length / (hingeCount + 1);
+    if (!hinge) return;
+    const { count: hingeCount, positions } = hingeLayout(
+      door.length,
+      hinge.hingesPerDoor,
+    );
 
-      for (let i = 1; i <= hingeCount; i++) {
-        machining.push({
-          part: door.part,
-          section: door.section,
-          operation: "Hinge Cup Boring",
-          tool: `${hinge.cupDiameter}mm Forstner bit`,
-          diameter: hinge.cupDiameter,
-          depth: hinge.cupDepth,
-          xPos: hinge.boringDistance,
-          yPos: i * spacing,
-          face: "Inside face",
-        });
-      }
-    }
+    positions.forEach((yPos, i) => {
+      machining.push({
+        part: door.part,
+        section: door.section,
+        operation: "Hinge Cup Boring",
+        tool: `${hinge.cupDiameter} mm Forstner`,
+        diameter: hinge.cupDiameter,
+        depth: hinge.cupDepth,
+        xPos: hinge.boringDistance,
+        yPos: Math.round(yPos),
+        face: "Inside face (hinge side)",
+        note: `Hinge ${i + 1}/${hingeCount}`,
+      });
+    });
   });
 
-  // Shelf pin holes (if adjustable shelves)
-  if (shelfSys.adjustable) {
-    const sidePanels = cutList.filter((p) => p.part.includes("Side"));
+  // 2. Shelf pin holes — FIXED: only structural side panels & dividers
+  if (shelfSys?.adjustable) {
+    const sidePanels = cutList.filter(
+      (p) =>
+        p.part === "Left Side Panel" ||
+        p.part === "Right Side Panel" ||
+        p.part === "Vertical Divider",
+    );
+
     sidePanels.forEach((panel) => {
-      const holes = Math.floor(panel.length / shelfSys.rowSpacing);
-      for (let i = 1; i <= holes; i++) {
-        // Two rows of holes per side (left & right edge of shelf)
-        machining.push({
-          part: panel.part,
-          section: panel.section,
-          operation: "Shelf Pin Hole",
-          tool: `${shelfSys.pinDiameter}mm drill bit`,
-          diameter: shelfSys.pinDiameter,
-          depth: shelfSys.pinDepth,
-          xPos: shelfSys.edgeSetback,
-          yPos: i * shelfSys.rowSpacing,
-          face: "Interior face (both edges)",
+      const rowCount = Math.floor(panel.length / shelfSys.rowSpacing);
+      for (let i = 1; i <= rowCount; i++) {
+        ["front", "rear"].forEach((col) => {
+          machining.push({
+            part: panel.part,
+            section: panel.section,
+            operation: "Shelf Pin Hole",
+            tool: `${shelfSys.pinDiameter} mm drill`,
+            diameter: shelfSys.pinDiameter,
+            depth: shelfSys.pinDepth,
+            xPos:
+              col === "front"
+                ? shelfSys.edgeSetback
+                : panel.width - shelfSys.edgeSetback,
+            yPos: i * shelfSys.rowSpacing,
+            face: "Interior face",
+            note: `${col} column, row ${i}`,
+          });
         });
       }
     });
   }
 
-  // Dowel/cam lock boring
-  if (joinery.requiresBoring) {
+  // 3. Dowel / cam lock boring for joinery
+  if (joinery?.requiresBoring) {
     const panels = cutList.filter(
-      (p) => p.machining && p.machining.includes("Boring"),
+      (p) => p.machining && p.machining.toLowerCase().includes("boring"),
     );
     panels.forEach((panel) => {
       machining.push({
@@ -469,11 +666,14 @@ export function generateMachiningSchedule(cutList, config) {
         operation: joinery.id === "dowel" ? "Dowel Boring" : "Cam Lock Boring",
         tool:
           joinery.id === "dowel"
-            ? `${joinery.dowelSize}mm drill`
-            : `${joinery.camSize}mm Forstner`,
+            ? `${joinery.dowelSize} mm drill`
+            : `${joinery.camSize} mm Forstner`,
         diameter: joinery.id === "dowel" ? joinery.dowelSize : joinery.camSize,
         depth: joinery.id === "dowel" ? joinery.dowelDepth : joinery.camDepth,
-        note: "Position as per assembly drawing",
+        xPos: null,
+        yPos: null,
+        face: "Joint face",
+        note: "Position per assembly drawing — 32 mm pitch system",
       });
     });
   }

@@ -50,7 +50,9 @@ export const DRAWER_SLIDES = {
     clearancePerSide: 12.5, // mm per side
     minDepth: 270,
     maxDepth: 550,
-    heights: [83, 120, 150, 193], // drawer heights it works with
+    // NOTE: These are Blum NL (Nominal Length) runner height values from spec sheet,
+    // NOT arbitrary drawer box heights. Used for slide-compatibility validation.
+    heights: [83, 120, 150, 193],
     cost: 18.5,
   },
   "blum-tandem-650": {
@@ -62,6 +64,7 @@ export const DRAWER_SLIDES = {
     clearancePerSide: 12.5,
     minDepth: 270,
     maxDepth: 650,
+    // NOTE: Blum NL runner height values — see spec sheet art. 550H/650H
     heights: [83, 120, 150, 193],
     cost: 22.0,
   },
@@ -71,7 +74,7 @@ export const DRAWER_SLIDES = {
     model: "Quadro V6",
     type: "undermount",
     maxLoad: 40,
-    clearancePerSide: 13,
+    clearancePerSide: 13, // conservative; spec sheet range is 12.5–13 mm
     minDepth: 270,
     maxDepth: 600,
     heights: [70, 92, 121, 186],
@@ -86,7 +89,7 @@ export const DRAWER_SLIDES = {
     clearancePerSide: 12.7,
     minDepth: 250,
     maxDepth: 650,
-    heights: [50, 300], // works with any height
+    heights: [50, 300], // side-mount: works with wide range of heights
     cost: 12.4,
   },
 };
