@@ -594,9 +594,74 @@ export default function ConfigPanel({
                         <option value="top">Top</option>
                         <option value="bottom">Bottom</option>
                         <option value="full">Full</option>
+                        <option value="custom">Custom</option>{" "}
+                        {/* NEW OPTION */}
                       </select>
                     </label>
                   </div>
+
+                  {/* NEW: Conditional Custom Offset Inputs */}
+                  {s.drawers?.placement === "custom" && (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 6,
+                        marginTop: 8,
+                        paddingTop: 8,
+                        borderTop: `1px dashed ${ui.border}`,
+                      }}
+                    >
+                      <label style={{ fontSize: 9, color: ui.muted }}>
+                        Offset From
+                        <select
+                          value={s.drawers?.customFrom || "bottom"}
+                          onChange={(e) =>
+                            updateSection({
+                              ...s,
+                              drawers: {
+                                ...(s.drawers || {}),
+                                customFrom: e.target.value,
+                              },
+                            })
+                          }
+                          style={{
+                            ...inputStyle,
+                            padding: "4px 6px",
+                            fontSize: 10,
+                            marginTop: 2,
+                          }}
+                        >
+                          <option value="bottom">Bottom</option>
+                          <option value="top">Top</option>
+                        </select>
+                      </label>
+                      <label style={{ fontSize: 9, color: ui.muted }}>
+                        Distance (%)
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={s.drawers?.customPercentage ?? 20}
+                          onChange={(e) =>
+                            updateSection({
+                              ...s,
+                              drawers: {
+                                ...(s.drawers || {}),
+                                customPercentage: Number(e.target.value),
+                              },
+                            })
+                          }
+                          style={{
+                            ...inputStyle,
+                            padding: "4px 6px",
+                            fontSize: 10,
+                            marginTop: 2,
+                          }}
+                        />
+                      </label>
+                    </div>
+                  )}
                 </div>
               </div>
             );

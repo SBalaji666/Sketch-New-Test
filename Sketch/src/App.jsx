@@ -67,9 +67,11 @@ export default function App() {
 
   // ── Generate all outputs ──────────────────────────────────────────────────
   const cutList = useMemo(() => generateCutList(config), [config]);
+
+  // Update this block to pass cutList to the function
   const hardwareSchedule = useMemo(
-    () => generateHardwareSchedule(config),
-    [config],
+    () => generateHardwareSchedule(config, cutList),
+    [config, cutList],
   );
   const machiningSchedule = useMemo(
     () => generateMachiningSchedule(cutList, config),
