@@ -41,64 +41,7 @@ export default function App() {
   });
 
   // FIXED: Duplicate 'S7' label corrected — last section is now 'S8'
-  const [sections, setSections] = useState([
-    {
-      id: 1,
-      label: "S1",
-      width: 600,
-      type: "closed",
-      shelves: 0,
-      drawers: { count: 6, height: 160, placement: "bottom" },
-    },
-    {
-      id: 2,
-      label: "S2",
-      width: 500,
-      type: "closed",
-      shelves: 2,
-      drawers: { count: 0, height: 120, placement: "bottom" },
-    },
-    {
-      id: 3,
-      label: "S3",
-      width: 500,
-      type: "closed",
-      shelves: 2,
-      drawers: { count: 0, height: 120, placement: "bottom" },
-    },
-    {
-      id: 4,
-      label: "S4",
-      width: 300,
-      type: "open",
-      shelves: 4,
-      drawers: { count: 0, height: 120, placement: "bottom" },
-    },
-    {
-      id: 5,
-      label: "S5",
-      width: 500,
-      type: "closed",
-      shelves: 2,
-      drawers: { count: 0, height: 120, placement: "bottom" },
-    },
-    {
-      id: 6,
-      label: "S6",
-      width: 500,
-      type: "closed",
-      shelves: 2,
-      drawers: { count: 0, height: 120, placement: "bottom" },
-    },
-    {
-      id: 7,
-      label: "S7",
-      width: 600,
-      type: "closed",
-      shelves: 0,
-      drawers: { count: 6, height: 160, placement: "bottom" },
-    },
-  ]);
+  const [sections, setSections] = useState([]);
 
   const [themeKey, setThemeKey] = useState("technical");
   const [mainTab, setMainTab] = useState("3d-view");
@@ -225,24 +168,60 @@ export default function App() {
 
   // ── Section management ────────────────────────────────────────────────────
   const addSection = () => {
-    const newId = nextSectionId.current++;
-    setSections((prev) => [
-      ...prev,
-      {
-        id: newId,
-        label: `S${newId}`,
-        width: 350,
-        type: "closed",
-        shelves: 2,
-        drawers: { count: 0, height: 120, placement: "bottom" },
-      },
-    ]);
+    const newId = nextSectionId.current++; // Keep internal ID unique for React keys
+
+    setSections((prev) => {
+      // Find the highest number currently used in labels (e.g., "S3" -> 3)
+      const highestLabelNum = prev.reduce((max, s) => {
+        // Strip out any non-numeric characters just in case the user renamed it
+        const num = parseInt(s.label.replace(/\D/g, ""), 10);
+        return !isNaN(num) && num > max ? num : max;
+      }, 0);
+
+      return [
+        ...prev,
+        {
+          id: newId,
+          label: `S${highestLabelNum + 1}`, // Clean visual label!
+          width: 350,
+          type: "closed",
+          shelves: 2,
+          drawers: { count: 0, height: 120, placement: "bottom" },
+        },
+      ];
+    });
   };
 
   const removeSection = (id) =>
     setSections((prev) => prev.filter((s) => s.id !== id));
   const updateSection = (updated) =>
     setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+
+  // ── Auto-generate sections ────────────────────────────────────────────────
+  const generateEquidistantSections = (count) => {
+    if (count < 1) return;
+
+    const newSections = [];
+    const equalWidth = Math.floor(overall.length / count);
+
+    for (let i = 0; i < count; i++) {
+      const isLast = i === count - 1;
+      const sectionWidth = isLast
+        ? overall.length - equalWidth * i
+        : equalWidth;
+
+      newSections.push({
+        id: nextSectionId.current++, // Keeps React keys strictly unique
+        label: `S${i + 1}`, // Restarts labels cleanly at S1, S2, S3...
+        width: sectionWidth,
+        type: "closed",
+        shelves: 2,
+        drawers: { count: 0, height: 120, placement: "bottom" },
+      });
+    }
+
+    setSections(newSections);
+  };
 
   // ── Tab button ────────────────────────────────────────────────────────────
   const tabBtn = (label, key, icon, badge = null) => (
@@ -493,12 +472,14 @@ export default function App() {
           addSection={addSection}
           removeSection={removeSection}
           updateSection={updateSection}
+          generateEquidistantSections={generateEquidistantSections}
           themeKey={themeKey}
           setThemeKey={setThemeKey}
           mainTab={mainTab}
           totalMm={totalMm}
           warnings={warnings}
           ui={ui}
+          selectedSection={selectedSection}
         />
 
         <div
@@ -554,9 +535,9 @@ export default function App() {
             right: 20,
             background: ui.accent,
             color: "#fff",
-            padding: 12,
+            padding: "6px 12px",
             borderRadius: 10,
-            fontSize: 11,
+            fontSize: 10,
             fontWeight: 600,
             boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
             zIndex: 1000,

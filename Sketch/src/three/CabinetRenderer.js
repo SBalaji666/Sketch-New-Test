@@ -86,13 +86,14 @@ export class CabinetRenderer {
     this.toggleButton.style.position = "absolute";
     this.toggleButton.style.bottom = "20px";
     this.toggleButton.style.right = "20px";
-    this.toggleButton.style.padding = "12px 24px";
+    this.toggleButton.style.padding = "6px 12px";
     this.toggleButton.style.backgroundColor = "#2563eb";
     this.toggleButton.style.color = "#ffffff";
     this.toggleButton.style.border = "none";
     this.toggleButton.style.borderRadius = "8px";
     this.toggleButton.style.cursor = "pointer";
-    this.toggleButton.style.fontFamily = "system-ui, -apple-system, sans-serif";
+    this.toggleButton.style.fontFamily =
+      "'IBM Plex Mono', 'Courier New', monospace";
     this.toggleButton.style.fontWeight = "600";
     this.toggleButton.style.fontSize = "10px";
     this.toggleButton.style.boxShadow =
@@ -218,18 +219,22 @@ export class CabinetRenderer {
         metalness: 0.0,
       }),
       highlight: new THREE.MeshStandardMaterial({
-        color: 0x4a9eff,
-        roughness: 0.3,
-        metalness: 0.2,
+        color: 0xe6c280, // Warm golden amber
+        roughness: 0.4,
+        metalness: 0.1,
         emissive: 0x2563eb,
-        emissiveIntensity: 0.4,
+        emissiveIntensity: 0.3,
+        transparent: true,
+        opacity: 0.75, // Lets you see the shelves behind the highlight
       }),
       hover: new THREE.MeshStandardMaterial({
-        color: 0x6bb6ff,
-        roughness: 0.3,
+        color: 0xf5dfaf, // Lighter champagne
+        roughness: 0.4,
         metalness: 0.1,
         emissive: 0x3b82f6,
-        emissiveIntensity: 0.3,
+        emissiveIntensity: 0.2,
+        transparent: true,
+        opacity: 0.65,
       }),
     };
   }
@@ -709,8 +714,10 @@ export class CabinetRenderer {
 
     if (intersects.length > 0) {
       let parent = intersects[0].object;
-      while (parent && parent.parent !== this.cabinetGroup) {
-        if (parent.userData.section) {
+
+      // FIX: Changed condition to check parent against cabinetGroup directly
+      while (parent && parent !== this.cabinetGroup) {
+        if (parent.userData && parent.userData.section) {
           activeSection = parent;
           break;
         }
