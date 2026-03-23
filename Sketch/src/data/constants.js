@@ -309,7 +309,7 @@ export const DOOR_OVERLAY_TYPES = {
 
 // ─── DEFAULT VALUES ───────────────────────────────────────────────────────────
 export const DEFAULTS = {
-  overall: { length: 3500, height: 2800, depth: 550, unit: "mm" },
+  overall: { length: 1000, height: 2000, depth: 300, unit: "mm" },
   materials: {
     carcass: 18,
     back: 9,
