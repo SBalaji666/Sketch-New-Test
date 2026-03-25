@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+import { DOOR_OVERLAY_TYPES } from "../data/constants.js"; // Ensure this import is available
 
 /**
  * Three.js Cabinet Renderer - Infurnia-style 3D Visualization
@@ -27,7 +28,7 @@ export class CabinetRenderer {
 
     // Animation states
     this.isDoorsOpen = false;
-    this.isExploded = false; // NEW
+    this.isExploded = false;
     this.doorHinges = [];
     this.drawers = [];
 
@@ -130,7 +131,6 @@ export class CabinetRenderer {
     });
   }
 
-  // NEW: Expose explode state handler for React
   setExploded(isExploded) {
     this.isExploded = isExploded;
   }
@@ -219,16 +219,16 @@ export class CabinetRenderer {
         metalness: 0.0,
       }),
       highlight: new THREE.MeshStandardMaterial({
-        color: 0xe6c280, // Warm golden amber
+        color: 0xe6c280,
         roughness: 0.4,
         metalness: 0.1,
         emissive: 0x2563eb,
         emissiveIntensity: 0.3,
         transparent: true,
-        opacity: 0.75, // Lets you see the shelves behind the highlight
+        opacity: 0.75,
       }),
       hover: new THREE.MeshStandardMaterial({
-        color: 0xf5dfaf, // Lighter champagne
+        color: 0xf5dfaf,
         roughness: 0.4,
         metalness: 0.1,
         emissive: 0x3b82f6,
@@ -257,9 +257,8 @@ export class CabinetRenderer {
 
     this.cabinetGroup = new THREE.Group();
     this.cabinetGroup.name = "cabinet";
-
-    // NEW: Save materials globally so we can reference them in selection/hover
     this.materials = this.createMaterials();
+
     const {
       overall,
       materials: matThickness,
@@ -267,26 +266,42 @@ export class CabinetRenderer {
       hardware,
     } = this.config;
     const { length: L, height: H, depth: D } = overall;
-    const ct = matThickness.carcass;
-    const bt = matThickness.back;
+    const ct = matThickness.carcass,
+      bt = matThickness.back,
+      dt = matThickness.door;
     const plinthH = hardware?.plinth
       ? parseInt(hardware.plinth.split("-")[1]) || 100
       : 100;
+    const doorOverlay =
+      DOOR_OVERLAY_TYPES[hardware?.doorOverlay] || DOOR_OVERLAY_TYPES.full;
+
+    // Derived Depths mirroring cutlist logic
+    const bumperGap = 1;
+    const carcassDepth =
+      doorOverlay.id !== "inset" ? D - bt - dt - bumperGap : D - bt;
 
     this.cabinetGroup.position.set(-L / 2, 0, -D / 2);
 
-    this.buildCarcassStructure(this.materials, L, H, D, ct, bt, plinthH);
-    this.buildSections(this.materials, sections, L, H, D, ct, bt, plinthH);
-    this.addDimensionAnnotations(L, H, D);
+    this.buildCarcassStructure(L, H, D, ct, bt, plinthH, carcassDepth);
+    this.buildSections(
+      sections,
+      L,
+      H,
+      D,
+      ct,
+      bt,
+      dt,
+      plinthH,
+      carcassDepth,
+      doorOverlay,
+    );
+    this.addDimensionAnnotations(L, H + plinthH, D);
 
-    // NEW: Final configuration for selections and explode states
     this.setupObjectMetadata();
-
     this.scene.add(this.cabinetGroup);
-    this.centerCamera(L, H, D);
+    this.centerCamera(L, H + plinthH, D);
   }
 
-  // NEW: Store initial states for hovering and exploding
   setupObjectMetadata() {
     const box = new THREE.Box3().setFromObject(this.cabinetGroup);
     const center = new THREE.Vector3();
@@ -294,471 +309,416 @@ export class CabinetRenderer {
 
     this.cabinetGroup.traverse((obj) => {
       if (obj.isMesh || obj.isLineSegments) {
-        // 1. Store original materials for hover restoration
-        if (obj.isMesh) {
-          obj.userData.originalMaterial = obj.material;
-        }
-
-        // 2. Store base positions and calculate explode vectors
+        if (obj.isMesh) obj.userData.originalMaterial = obj.material;
         obj.userData.originalPosition = obj.position.clone();
 
         const objBox = new THREE.Box3().setFromObject(obj);
         const objCenter = new THREE.Vector3();
         objBox.getCenter(objCenter);
 
-        // Create an outward direction relative to the overall cabinet center
         const dir = new THREE.Vector3()
           .subVectors(objCenter, center)
           .normalize();
         if (dir.lengthSq() === 0) dir.set(0, 0, 1);
-
         obj.userData.explodeDirection = dir;
       }
     });
   }
 
-  buildCarcassStructure(materials, L, H, D, ct, bt, plinthH) {
-    const effectiveH = H - plinthH;
-    const internalH = effectiveH - ct * 2;
-    const centerY = plinthH + ct + internalH / 2;
+  createPart(geo, mat, x, y, z, edgeColor, group) {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
 
-    // 1. Plinth (Kickboard) - Front and Side Rails
-    if (plinthH > 0) {
-      const setback = 0; // 30mm standard setback
-
-      // Plinth Front Rail
-      const plinthFrontGeo = new THREE.BoxGeometry(L - ct * 2, plinthH, ct);
-      const plinthFront = new THREE.Mesh(plinthFrontGeo, materials.carcass);
-      plinthFront.position.set(L / 2, plinthH / 2, D - setback - ct / 2);
-      plinthFront.castShadow = true;
-      this.cabinetGroup.add(plinthFront);
-
-      const plinthFrontEdges = new THREE.EdgesGeometry(plinthFrontGeo);
-      const plinthFrontLines = new THREE.LineSegments(
-        plinthFrontEdges,
-        new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 }),
-      );
-      plinthFrontLines.position.copy(plinthFront.position);
-      this.cabinetGroup.add(plinthFrontLines);
-
-      // Plinth Side Rails (Left and Right returns)
-      const plinthSideGeo = new THREE.BoxGeometry(ct, plinthH, D - setback);
-
-      const plinthLeft = new THREE.Mesh(plinthSideGeo, materials.carcass);
-      plinthLeft.position.set(ct / 2, plinthH / 2, (D - setback) / 2);
-      plinthLeft.castShadow = true;
-      this.cabinetGroup.add(plinthLeft);
-
-      const plinthLeftEdges = new THREE.EdgesGeometry(plinthSideGeo);
-      const plinthLeftLines = new THREE.LineSegments(
-        plinthLeftEdges,
-        new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 }),
-      );
-      plinthLeftLines.position.copy(plinthLeft.position);
-      this.cabinetGroup.add(plinthLeftLines);
-
-      const plinthRight = new THREE.Mesh(plinthSideGeo, materials.carcass);
-      plinthRight.position.set(L - ct / 2, plinthH / 2, (D - setback) / 2);
-      plinthRight.castShadow = true;
-      this.cabinetGroup.add(plinthRight);
-
-      const plinthRightEdges = new THREE.EdgesGeometry(plinthSideGeo);
-      const plinthRightLines = new THREE.LineSegments(
-        plinthRightEdges,
-        new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 }),
-      );
-      plinthRightLines.position.copy(plinthRight.position);
-      this.cabinetGroup.add(plinthRightLines);
-    }
-
-    // 2. Top Panel
-    const topGeo = new THREE.BoxGeometry(L, ct, D - bt);
-    const top = new THREE.Mesh(topGeo, materials.carcass);
-    top.position.set(L / 2, H - ct / 2, (D + bt) / 2);
-    top.castShadow = true;
-    top.receiveShadow = true;
-    this.cabinetGroup.add(top);
-
-    const topEdges = new THREE.EdgesGeometry(topGeo);
-    const topLines = new THREE.LineSegments(
-      topEdges,
-      new THREE.LineBasicMaterial({ color: 0x555555, linewidth: 1 }),
+    const edges = new THREE.EdgesGeometry(geo);
+    const lines = new THREE.LineSegments(
+      edges,
+      new THREE.LineBasicMaterial({ color: edgeColor, linewidth: 1 }),
     );
-    topLines.position.copy(top.position);
-    this.cabinetGroup.add(topLines);
-
-    // 3. Bottom Panel (Shifted up by plinthH)
-    const bottom = new THREE.Mesh(topGeo, materials.carcass);
-    bottom.position.set(L / 2, plinthH + ct / 2, (D + bt) / 2);
-    bottom.castShadow = true;
-    bottom.receiveShadow = true;
-    this.cabinetGroup.add(bottom);
-
-    const bottomEdges = new THREE.EdgesGeometry(topGeo);
-    const bottomLines = new THREE.LineSegments(
-      bottomEdges,
-      new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 }),
-    );
-    bottomLines.position.copy(bottom.position);
-    this.cabinetGroup.add(bottomLines);
-
-    // 4. Side Panels (Sit on the bottom panel)
-    const sideGeo = new THREE.BoxGeometry(ct, internalH, D - bt);
-    const leftSide = new THREE.Mesh(sideGeo, materials.carcass);
-    leftSide.position.set(ct / 2, centerY, (D + bt) / 2);
-    leftSide.castShadow = true;
-    leftSide.receiveShadow = true;
-    this.cabinetGroup.add(leftSide);
-
-    const leftEdges = new THREE.EdgesGeometry(sideGeo);
-    const leftLines = new THREE.LineSegments(
-      leftEdges,
-      new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 }),
-    );
-    leftLines.position.copy(leftSide.position);
-    this.cabinetGroup.add(leftLines);
-
-    const rightSide = new THREE.Mesh(sideGeo, materials.carcass);
-    rightSide.position.set(L - ct / 2, centerY, (D + bt) / 2);
-    rightSide.castShadow = true;
-    rightSide.receiveShadow = true;
-    this.cabinetGroup.add(rightSide);
-
-    const rightEdges = new THREE.EdgesGeometry(sideGeo);
-    const rightLines = new THREE.LineSegments(
-      rightEdges,
-      new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 }),
-    );
-    rightLines.position.copy(rightSide.position);
-    this.cabinetGroup.add(rightLines);
-
-    // 5. Back Panel
-    const backGeo = new THREE.BoxGeometry(L - ct * 2, internalH, bt);
-    const back = new THREE.Mesh(backGeo, materials.back);
-    back.position.set(L / 2, centerY, bt / 2);
-    back.receiveShadow = true;
-    this.cabinetGroup.add(back);
-
-    const backEdges = new THREE.EdgesGeometry(backGeo);
-    const backLines = new THREE.LineSegments(
-      backEdges,
-      new THREE.LineBasicMaterial({ color: 0x666666, linewidth: 1 }),
-    );
-    backLines.position.copy(back.position);
-    this.cabinetGroup.add(backLines);
+    lines.position.copy(mesh.position);
+    group.add(lines);
+    return mesh;
   }
 
-  buildSections(materials, sections, L, H, D, ct, bt, plinthH) {
-    const totalWidth = sections.reduce((sum, s) => sum + s.width, 0);
-    const scale = L / totalWidth;
-    let currentX = ct;
+  buildCarcassStructure(L, H, D, ct, bt, plinthH, cD) {
+    const mats = this.materials;
+    const cZ = bt + cD / 2; // Z-Center of carcass
 
-    // New Y-Axis Math
-    const effectiveH = H - plinthH;
-    const internalH = effectiveH - ct * 2;
-    const centerY = plinthH + ct + internalH / 2;
+    // 1. Plinth (Base)
+    if (plinthH > 0) {
+      const pFrontGeo = new THREE.BoxGeometry(L - ct * 2, plinthH, ct);
+      this.createPart(
+        pFrontGeo,
+        mats.carcass,
+        L / 2,
+        plinthH / 2,
+        bt + cD - ct / 2,
+        0x333333,
+        this.cabinetGroup,
+      );
 
-    sections.forEach((section, idx) => {
-      const sw = section.width * scale;
+      const pSideGeo = new THREE.BoxGeometry(ct, plinthH, cD);
+      this.createPart(
+        pSideGeo,
+        mats.carcass,
+        ct / 2,
+        plinthH / 2,
+        cZ,
+        0x333333,
+        this.cabinetGroup,
+      );
+      this.createPart(
+        pSideGeo,
+        mats.carcass,
+        L - ct / 2,
+        plinthH / 2,
+        cZ,
+        0x333333,
+        this.cabinetGroup,
+      );
+    }
+
+    // 2. Top Panel (Full width, caps sides)
+    const topGeo = new THREE.BoxGeometry(L, ct, cD);
+    this.createPart(
+      topGeo,
+      mats.carcass,
+      L / 2,
+      plinthH + H - ct / 2,
+      cZ,
+      0x555555,
+      this.cabinetGroup,
+    );
+
+    // 3. Bottom Panel (Between sides)
+    const botGeo = new THREE.BoxGeometry(L - ct * 2, ct, cD);
+    this.createPart(
+      botGeo,
+      mats.carcass,
+      L / 2,
+      plinthH + ct / 2,
+      cZ,
+      0x333333,
+      this.cabinetGroup,
+    );
+
+    // 4. Side Panels (Under top panel, covers bottom panel)
+    const sideGeo = new THREE.BoxGeometry(ct, H - ct, cD);
+    const sideY = plinthH + (H - ct) / 2;
+    this.createPart(
+      sideGeo,
+      mats.carcass,
+      ct / 2,
+      sideY,
+      cZ,
+      0x333333,
+      this.cabinetGroup,
+    );
+    this.createPart(
+      sideGeo,
+      mats.carcass,
+      L - ct / 2,
+      sideY,
+      cZ,
+      0x333333,
+      this.cabinetGroup,
+    );
+
+    // 5. Back Panel (Plant-on, completely behind carcass)
+    const backGeo = new THREE.BoxGeometry(L, H, bt);
+    this.createPart(
+      backGeo,
+      mats.back,
+      L / 2,
+      plinthH + H / 2,
+      bt / 2,
+      0x666666,
+      this.cabinetGroup,
+    );
+  }
+
+  buildSections(sections, L, H, D, ct, bt, dt, plinthH, cD, doorOverlay) {
+    const dividerCount = sections.length - 1;
+    const totalInternalWidth = L - ct * 2 - dividerCount * ct;
+    const totalW = sections.reduce((a, s) => a + s.width, 0) || 1;
+
+    const normSections = sections.map((s) => ({
+      ...s,
+      intW: Math.round((s.width / totalW) * totalInternalWidth),
+      extW: Math.round((s.width / totalW) * L),
+    }));
+
+    // Fix rounding errors
+    const sumInt = normSections.reduce((sum, s) => sum + s.intW, 0);
+    const sumExt = normSections.reduce((sum, s) => sum + s.extW, 0);
+    if (normSections.length > 0) {
+      normSections[normSections.length - 1].intW += totalInternalWidth - sumInt;
+      normSections[normSections.length - 1].extW += L - sumExt;
+    }
+
+    let currentIntX = ct;
+    let currentExtX = 0;
+
+    normSections.forEach((section, idx) => {
       const sectionGroup = new THREE.Group();
       sectionGroup.name = `section-${section.id}`;
       sectionGroup.userData = { section, index: idx };
 
-      // 1. Draw the vertical divider
+      // 1. Draw Vertical Divider
       if (idx > 0) {
-        const dividerGeo = new THREE.BoxGeometry(ct, internalH, D - bt);
-        const divider = new THREE.Mesh(dividerGeo, materials.carcass);
-        divider.position.set(currentX - ct / 2, centerY, (D + bt) / 2);
-        divider.castShadow = true;
-        divider.receiveShadow = true;
-        sectionGroup.add(divider);
-
-        const dividerEdges = new THREE.EdgesGeometry(dividerGeo);
-        const dividerLines = new THREE.LineSegments(
-          dividerEdges,
-          new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 }),
+        const divGeo = new THREE.BoxGeometry(ct, H - ct * 2, cD);
+        this.createPart(
+          divGeo,
+          this.materials.carcass,
+          currentIntX + ct / 2,
+          plinthH + H / 2,
+          bt + cD / 2,
+          0x333333,
+          sectionGroup,
         );
-        dividerLines.position.copy(divider.position);
-        sectionGroup.add(dividerLines);
+        currentIntX += ct; // Move pointer past divider
       }
 
-      // 2. INTERIOR & EXTERIOR BOUNDS
-      const interiorLeft = currentX;
-      const interiorRight =
-        idx === sections.length - 1 ? L - ct : currentX + sw - ct;
-      const interiorW = interiorRight - interiorLeft;
-      const interiorCenterX = interiorLeft + interiorW / 2;
-
-      const exteriorLeft = idx === 0 ? 0 : currentX - ct / 2;
-      const exteriorRight =
-        idx === sections.length - 1 ? L : currentX + sw - ct / 2;
-      const exteriorW = exteriorRight - exteriorLeft;
-      const exteriorCenterX = exteriorLeft + exteriorW / 2;
+      const intCenterX = currentIntX + section.intW / 2;
+      const extCenterX = currentExtX + section.extW / 2;
 
       const bounds = {
-        intX: interiorCenterX,
-        intW: interiorW,
-        extX: exteriorCenterX,
-        extW: exteriorW,
+        intX: intCenterX,
+        intW: section.intW,
+        extX: extCenterX,
+        extW: section.extW,
       };
-
-      const interiorDepth = D - bt - ct;
 
       if (section.type === "open") {
         this.buildOpenSection(
           sectionGroup,
-          materials,
           bounds,
-          internalH,
-          interiorDepth,
+          H,
+          cD,
           ct,
-          section,
-          D,
           bt,
           plinthH,
+          section,
         );
       } else {
         this.buildClosedSection(
           sectionGroup,
-          materials,
           bounds,
-          internalH,
-          interiorDepth,
-          ct,
           H,
-          section,
-          D,
+          cD,
+          ct,
+          bt,
+          dt,
           plinthH,
+          section,
+          doorOverlay,
         );
       }
 
       this.cabinetGroup.add(sectionGroup);
-      currentX += sw;
+      currentIntX += section.intW;
+      currentExtX += section.extW;
     });
   }
 
-  buildOpenSection(
-    group,
-    materials,
-    bounds,
-    h,
-    d,
-    ct,
-    section,
-    D,
-    bt,
-    plinthH = 100,
-  ) {
+  buildOpenSection(group, bounds, H, cD, ct, bt, plinthH, section) {
     const { intX, intW } = bounds;
     const shelfCount = section.shelves || 0;
+    const internalH = H - ct * 2;
 
     if (shelfCount > 0) {
-      const shelfSpacing = h / (shelfCount + 1);
+      const shelfSpacing = internalH / (shelfCount + 1);
       for (let i = 0; i < shelfCount; i++) {
         const shelfY = plinthH + ct + (i + 1) * shelfSpacing;
-
-        const shelfGeo = new THREE.BoxGeometry(intW - 2, 18, d - 10);
-        const shelf = new THREE.Mesh(shelfGeo, materials.shelf);
-        shelf.position.set(intX, shelfY, (D + bt) / 2);
-        shelf.castShadow = true;
-        shelf.receiveShadow = true;
-        group.add(shelf);
-
-        const shelfEdges = new THREE.EdgesGeometry(shelfGeo);
-        const shelfLines = new THREE.LineSegments(
-          shelfEdges,
-          new THREE.LineBasicMaterial({ color: 0x555555, linewidth: 1 }),
+        const shelfGeo = new THREE.BoxGeometry(intW - 2, 18, cD - 10); // 10mm setback
+        this.createPart(
+          shelfGeo,
+          this.materials.shelf,
+          intX,
+          shelfY,
+          bt + (cD - 10) / 2,
+          0x555555,
+          group,
         );
-        shelfLines.position.copy(shelf.position);
-        group.add(shelfLines);
       }
     }
   }
 
   buildClosedSection(
     group,
-    materials,
     bounds,
-    h,
-    d,
+    H,
+    cD,
     ct,
-    totalH,
+    bt,
+    dt,
+    plinthH,
     section,
-    D,
-    plinthH = 100,
+    doorOverlay,
   ) {
     const { intX, intW, extX, extW } = bounds;
-    const doorGap = 2;
-    const doorWidth = extW - doorGap * 2;
+    const doorGap = 1;
+
+    // Width logic (Inset vs Overlay)
+    const doorWidth =
+      doorOverlay.id === "inset" ? intW - doorGap * 2 : extW - doorGap * 2;
+    const doorZ =
+      doorOverlay.id === "inset" ? bt + cD - dt / 2 : bt + cD + 1 + dt / 2;
+
     const drawerCount = section.drawers?.count || 0;
     const drawerHeight = section.drawers?.height || 120;
     const placement = section.drawers?.placement || "bottom";
 
-    // NEW Y-AXIS FLOOR AND CEILING LIMITS
     const floorY = plinthH + ct;
-    const ceilingY = totalH - ct;
+    const ceilingY = plinthH + H - ct;
 
     let drawerAreaStart = floorY,
       drawerAreaEnd = ceilingY;
     let shelfAreaStart = floorY,
       shelfAreaEnd = ceilingY;
 
-    // ── 1. CALCULATE DRAWER BOUNDS & DRAW DRAWERS ────────────────────────────
+    // ── 1. DRAWERS ────────────────────────────
     if (drawerCount > 0) {
       const totalDrawerHeight = drawerCount * drawerHeight;
-      const maxDrawerStart = ceilingY - totalDrawerHeight;
-
       if (placement === "bottom") {
         drawerAreaStart = floorY;
         drawerAreaEnd = floorY + totalDrawerHeight;
         shelfAreaStart = drawerAreaEnd;
-        shelfAreaEnd = ceilingY;
       } else if (placement === "top") {
-        shelfAreaStart = floorY;
         shelfAreaEnd = ceilingY - totalDrawerHeight;
         drawerAreaStart = shelfAreaEnd;
         drawerAreaEnd = ceilingY;
       } else if (placement === "custom") {
         const isFromTop = section.drawers?.customFrom === "top";
-        const percentage = (section.drawers?.customPercentage ?? 20) / 100;
-        const interiorH = ceilingY - floorY - ct * 2;
+        const offsetMm =
+          (ceilingY - floorY - ct * 2) *
+          ((section.drawers?.customPercentage ?? 20) / 100);
 
-        const offsetMm = interiorH * percentage;
-
-        if (isFromTop) {
-          drawerAreaStart = ceilingY - offsetMm - totalDrawerHeight - ct;
-        } else {
-          drawerAreaStart = floorY + offsetMm + ct;
-        }
-
-        drawerAreaStart = Math.max(
-          floorY + ct,
-          Math.min(drawerAreaStart, maxDrawerStart - ct),
-        );
+        drawerAreaStart = isFromTop
+          ? ceilingY - offsetMm - totalDrawerHeight - ct
+          : floorY + offsetMm + ct;
         drawerAreaEnd = drawerAreaStart + totalDrawerHeight;
-      } else {
-        drawerAreaStart = floorY;
-        drawerAreaEnd = ceilingY;
-        shelfAreaStart = 0;
-        shelfAreaEnd = 0;
       }
 
-      // Render Drawers
       for (let i = 0; i < drawerCount; i++) {
         const drawerY = drawerAreaStart + i * drawerHeight + drawerHeight / 2;
         const drawerGroupTarget = new THREE.Group();
-        drawerGroupTarget.userData = { targetZ: 0, openOffset: d * 0.65 };
+        drawerGroupTarget.userData = { targetZ: 0, openOffset: cD * 0.65 };
 
         // Drawer Box
-        const drawerBoxGeo = new THREE.BoxGeometry(
+        const dBoxGeo = new THREE.BoxGeometry(
           intW - 50,
           drawerHeight - 15,
-          d - 80,
+          cD - 20,
         );
-        const drawerBox = new THREE.Mesh(drawerBoxGeo, materials.drawerFace);
-        drawerBox.position.set(intX, drawerY, D - d / 2);
-        drawerBox.castShadow = true;
-        drawerGroupTarget.add(drawerBox);
-
-        const drawerEdges = new THREE.EdgesGeometry(drawerBoxGeo);
-        const drawerLines = new THREE.LineSegments(
-          drawerEdges,
-          new THREE.LineBasicMaterial({ color: 0x444444, linewidth: 1 }),
+        this.createPart(
+          dBoxGeo,
+          this.materials.drawerFace,
+          intX,
+          drawerY,
+          bt + (cD - 20) / 2,
+          0x444444,
+          drawerGroupTarget,
         );
-        drawerLines.position.copy(drawerBox.position);
-        drawerGroupTarget.add(drawerLines);
 
         // Drawer Face
-        const drawerFaceGeo = new THREE.BoxGeometry(
+        const dFaceGeo = new THREE.BoxGeometry(
           doorWidth,
           drawerHeight - doorGap * 2,
-          18,
+          dt,
         );
-        const drawerFace = new THREE.Mesh(drawerFaceGeo, materials.door);
-        drawerFace.position.set(extX, drawerY, D + 9);
-        drawerFace.castShadow = true;
-        drawerGroupTarget.add(drawerFace);
-
-        const faceEdges = new THREE.EdgesGeometry(drawerFaceGeo);
-        const faceLines = new THREE.LineSegments(
-          faceEdges,
-          new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 }),
+        const faceX = doorOverlay.id === "inset" ? intX : extX;
+        this.createPart(
+          dFaceGeo,
+          this.materials.door,
+          faceX,
+          drawerY,
+          doorZ,
+          0x333333,
+          drawerGroupTarget,
         );
-        faceLines.position.copy(drawerFace.position);
-        drawerGroupTarget.add(faceLines);
 
         // Handle
-        const dHandleGeo = new THREE.CylinderGeometry(4, 4, extW * 0.45, 16);
-        dHandleGeo.rotateZ(Math.PI / 2);
-        const dHandle = new THREE.Mesh(dHandleGeo, materials.handle);
-        dHandle.position.set(extX, drawerY, D + 25);
-        drawerGroupTarget.add(dHandle);
+        const dHandleGeo = new THREE.CylinderGeometry(
+          4,
+          4,
+          doorWidth * 0.45,
+          16,
+        ).rotateZ(Math.PI / 2);
+        const handleMesh = new THREE.Mesh(dHandleGeo, this.materials.handle);
+        handleMesh.position.set(faceX, drawerY, doorZ + dt / 2 + 15);
+        drawerGroupTarget.add(handleMesh);
 
         this.drawers.push(drawerGroupTarget);
         group.add(drawerGroupTarget);
       }
     }
 
-    // ── 2. RENDER FIXED DIVIDERS (ONLY IF CUSTOM) ────────────────────────────
+    // ── 2. FIXED DIVIDERS ────────────────────────────
     if (drawerCount > 0 && placement === "custom") {
-      const buildFixedDivider = (yPos) => {
-        const divGeo = new THREE.BoxGeometry(intW - 1, ct, d - 4);
-        const div = new THREE.Mesh(divGeo, materials.carcass);
-        div.position.set(intX, yPos, D - d / 2);
-        div.castShadow = true;
-        group.add(div);
-
-        const divEdges = new THREE.EdgesGeometry(divGeo);
-        const divLines = new THREE.LineSegments(
-          divEdges,
-          new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 }),
-        );
-        divLines.position.copy(div.position);
-        group.add(divLines);
-      };
-
-      buildFixedDivider(drawerAreaEnd + ct / 2);
-      buildFixedDivider(drawerAreaStart - ct / 2);
+      const divGeo = new THREE.BoxGeometry(intW - 1, ct, cD - 4);
+      this.createPart(
+        divGeo,
+        this.materials.carcass,
+        intX,
+        drawerAreaEnd + ct / 2,
+        bt + cD / 2,
+        0x333333,
+        group,
+      );
+      this.createPart(
+        divGeo,
+        this.materials.carcass,
+        intX,
+        drawerAreaStart - ct / 2,
+        bt + cD / 2,
+        0x333333,
+        group,
+      );
     }
 
-    // ── 3. DOORS ─────────────────────────────────────────────────────────────
+    // ── 3. DOORS ────────────────────────────────────
     const buildDoor = (startY, endY) => {
       const dHeight = endY - startY - doorGap * 2;
       if (dHeight < 50) return;
 
       const doorHinge = new THREE.Group();
-      const leftPivotX = extX - extW / 2;
-      doorHinge.position.set(
-        leftPivotX + doorGap,
-        startY + dHeight / 2 + doorGap,
-        D + 5,
-      );
+      // Pivot logic
+      const pivotX =
+        doorOverlay.id === "inset"
+          ? intX - doorWidth / 2
+          : extX - doorWidth / 2;
+      doorHinge.position.set(pivotX, startY + dHeight / 2, doorZ - dt / 2);
 
-      const doorGeo = new THREE.BoxGeometry(doorWidth, dHeight, 18);
-      doorGeo.translate(doorWidth / 2, 0, 0);
+      const doorGeo = new THREE.BoxGeometry(doorWidth, dHeight, dt);
+      doorGeo.translate(doorWidth / 2, 0, dt / 2); // Shift mesh so pivot is at corner
 
-      const doorMat = materials.door.clone();
+      const doorMat = this.materials.door.clone();
       doorMat.transparent = true;
       doorMat.opacity = 0.75;
-      const door = new THREE.Mesh(doorGeo, doorMat);
-      door.castShadow = true;
-      doorHinge.add(door);
 
-      const doorEdges = new THREE.EdgesGeometry(doorGeo);
-      const doorLines = new THREE.LineSegments(
-        doorEdges,
+      const doorMesh = new THREE.Mesh(doorGeo, doorMat);
+      doorMesh.castShadow = true;
+      doorHinge.add(doorMesh);
+
+      const edges = new THREE.EdgesGeometry(doorGeo);
+      const lines = new THREE.LineSegments(
+        edges,
         new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1.5 }),
       );
-      doorHinge.add(doorLines);
+      doorHinge.add(lines);
 
+      // Handle
       const handleGeo = new THREE.CylinderGeometry(
         5,
         5,
         Math.min(dHeight * 0.18, 300),
         16,
       );
-      const handle = new THREE.Mesh(handleGeo, materials.handle);
-      handle.position.set(doorWidth - 25, 0, 15);
+      const handle = new THREE.Mesh(handleGeo, this.materials.handle);
+      handle.position.set(doorWidth - 25, 0, dt + 15);
       doorHinge.add(handle);
 
       doorHinge.userData = { targetY: 0 };
@@ -766,18 +726,25 @@ export class CabinetRenderer {
       group.add(doorHinge);
     };
 
+    // Construct doors avoiding drawer banks
     if (drawerCount > 0 && placement === "custom") {
-      buildDoor(drawerAreaEnd + ct, ceilingY);
-      buildDoor(floorY, drawerAreaStart - ct);
+      buildDoor(drawerAreaEnd + ct, ceilingY + ct); // Custom logic uses dividers, fill space up to top
+      buildDoor(floorY - ct, drawerAreaStart - ct);
+    } else if (drawerCount > 0 && placement === "bottom") {
+      buildDoor(drawerAreaEnd, ceilingY + ct);
+    } else if (drawerCount > 0 && placement === "top") {
+      buildDoor(floorY - ct, drawerAreaStart);
     } else {
-      buildDoor(floorY, ceilingY);
+      // Full height door (starts below floorY to cover bottom edge if full overlay)
+      const startY = doorOverlay.id === "inset" ? floorY : plinthH + 2;
+      const endY = doorOverlay.id === "inset" ? ceilingY : plinthH + H - 2;
+      buildDoor(startY, endY);
     }
 
-    // ── 4. SMART SHELF DISTRIBUTION ──────────────────────────────────────────
+    // ── 4. SHELVES ────────────────────────────────────
     const shelfCount = section.shelves || 0;
     if (shelfCount > 0) {
       const cavities = [];
-
       if (placement === "custom" && drawerCount > 0) {
         if (drawerAreaStart - ct > floorY + 50)
           cavities.push({ start: floorY, end: drawerAreaStart - ct });
@@ -794,40 +761,32 @@ export class CabinetRenderer {
       );
 
       cavities.forEach((cavity, index) => {
-        const cavityHeight = cavity.end - cavity.start;
-        const isLast = index === cavities.length - 1;
-
-        const shelvesInThisCavity = isLast
-          ? remainingShelves
-          : Math.round(shelfCount * (cavityHeight / totalCavityHeight));
-
+        const cHeight = cavity.end - cavity.start;
+        const shelvesInThisCavity =
+          index === cavities.length - 1
+            ? remainingShelves
+            : Math.round(shelfCount * (cHeight / totalCavityHeight));
         remainingShelves -= shelvesInThisCavity;
 
-        if (shelvesInThisCavity > 0) {
-          const shelfSpacing = cavityHeight / (shelvesInThisCavity + 1);
-          for (let i = 0; i < shelvesInThisCavity; i++) {
-            const shelfY = cavity.start + (i + 1) * shelfSpacing;
-
-            const shelfGeo = new THREE.BoxGeometry(intW - 2, 18, d - 30);
-            const shelf = new THREE.Mesh(shelfGeo, materials.shelf);
-            shelf.position.set(intX, shelfY, D - d / 2);
-            shelf.castShadow = true;
-            group.add(shelf);
-
-            const shelfEdges = new THREE.EdgesGeometry(shelfGeo);
-            const shelfLines = new THREE.LineSegments(
-              shelfEdges,
-              new THREE.LineBasicMaterial({ color: 0x555555, linewidth: 1 }),
-            );
-            shelfLines.position.copy(shelf.position);
-            group.add(shelfLines);
-          }
+        for (let i = 0; i < shelvesInThisCavity; i++) {
+          const shelfY =
+            cavity.start + (i + 1) * (cHeight / (shelvesInThisCavity + 1));
+          const shelfGeo = new THREE.BoxGeometry(intW - 2, 18, cD - 10);
+          this.createPart(
+            shelfGeo,
+            this.materials.shelf,
+            intX,
+            shelfY,
+            bt + (cD - 10) / 2,
+            0x555555,
+            group,
+          );
         }
       });
     }
   }
 
-  addDimensionAnnotations(L, H, D) {
+  addDimensionAnnotations(L, totalHeight, D) {
     this.dimensionLines.forEach((line) => this.scene.remove(line));
     this.dimensionLines = [];
 
@@ -847,7 +806,7 @@ export class CabinetRenderer {
 
     const heightPoints = [
       new THREE.Vector3(-L / 2 - 100, 0, 0),
-      new THREE.Vector3(-L / 2 - 100, H, 0),
+      new THREE.Vector3(-L / 2 - 100, totalHeight, 0),
     ];
     const heightLine = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(heightPoints),
@@ -880,30 +839,24 @@ export class CabinetRenderer {
     this.renderer.setSize(width, height);
   }
 
-  // NEW: Extracted material update logic to run properly on hover/click
   updateHighlighting() {
-    // 1. Reset all to original
     this.cabinetGroup.traverse((obj) => {
       if (obj.isMesh && obj.userData.originalMaterial) {
         obj.material = obj.userData.originalMaterial;
       }
     });
 
-    // 2. Apply highlight to selected
     if (this.selectedSection) {
       this.selectedSection.traverse((obj) => {
-        if (obj.isMesh && obj.userData.originalMaterial) {
+        if (obj.isMesh && obj.userData.originalMaterial)
           obj.material = this.materials.highlight;
-        }
       });
     }
 
-    // 3. Apply hover to hovered (if it's not the selected one)
     if (this.hoveredSection && this.hoveredSection !== this.selectedSection) {
       this.hoveredSection.traverse((obj) => {
-        if (obj.isMesh && obj.userData.originalMaterial) {
+        if (obj.isMesh && obj.userData.originalMaterial)
           obj.material = this.materials.hover;
-        }
       });
     }
   }
@@ -920,11 +873,8 @@ export class CabinetRenderer {
     );
 
     let activeSection = null;
-
     if (intersects.length > 0) {
       let parent = intersects[0].object;
-
-      // FIX: Changed condition to check parent against cabinetGroup directly
       while (parent && parent !== this.cabinetGroup) {
         if (parent.userData && parent.userData.section) {
           activeSection = parent;
@@ -934,12 +884,10 @@ export class CabinetRenderer {
       }
     }
 
-    // Only update materials if the hovered target changed
     if (this.hoveredSection !== activeSection) {
       this.hoveredSection = activeSection;
       this.updateHighlighting();
     }
-
     this.renderer.domElement.style.cursor = activeSection
       ? "pointer"
       : "default";
@@ -947,16 +895,11 @@ export class CabinetRenderer {
 
   onClick(event) {
     if (this.hoveredSection) {
-      // Toggle selection off if already selected, otherwise select it
-      if (this.selectedSection === this.hoveredSection) {
-        this.selectedSection = null;
-      } else {
-        this.selectedSection = this.hoveredSection;
-      }
-
-      // Ensure material changes happen immediately
+      this.selectedSection =
+        this.selectedSection === this.hoveredSection
+          ? null
+          : this.hoveredSection;
       this.updateHighlighting();
-
       this.container.dispatchEvent(
         new CustomEvent("sectionselected", {
           detail: {
@@ -970,6 +913,11 @@ export class CabinetRenderer {
   }
 
   onKeyDown(event) {
+    const maxDim = Math.max(
+      this.config.overall.length,
+      this.config.overall.height,
+      this.config.overall.depth,
+    );
     switch (event.key.toLowerCase()) {
       case "a":
         this.axesHelper.visible = !this.axesHelper.visible;
@@ -977,7 +925,7 @@ export class CabinetRenderer {
       case "r":
         this.centerCamera(
           this.config.overall.length,
-          this.config.overall.height,
+          this.config.overall.height + 100,
           this.config.overall.depth,
         );
         break;
@@ -985,20 +933,20 @@ export class CabinetRenderer {
         this.camera.position.set(
           0,
           this.config.overall.height / 2,
-          this.config.overall.length * 1.5,
+          maxDim * 1.5,
         );
         this.controls.target.set(0, this.config.overall.height / 2, 0);
         break;
       case "s":
         this.camera.position.set(
-          this.config.overall.length * 1.5,
+          maxDim * 1.5,
           this.config.overall.height / 2,
           0,
         );
         this.controls.target.set(0, this.config.overall.height / 2, 0);
         break;
       case "t":
-        this.camera.position.set(0, this.config.overall.height * 2, 0);
+        this.camera.position.set(0, maxDim * 2, 0);
         this.controls.target.set(0, 0, 0);
         break;
     }
@@ -1007,7 +955,6 @@ export class CabinetRenderer {
   centerCamera(L, H, D) {
     const maxDim = Math.max(L, H, D);
     const distance = maxDim * 1.8;
-
     this.camera.position.set(-distance * 0.4, H * 0.8, distance * 0.8);
     this.controls.target.set(0, H * 0.5, 0);
     this.controls.update();
@@ -1024,7 +971,6 @@ export class CabinetRenderer {
 
     const lerpFactor = 0.1;
 
-    // Smooth door/drawer animation
     if (this.doorHinges.length > 0) {
       this.doorHinges.forEach((door) => {
         door.rotation.y +=
@@ -1039,7 +985,6 @@ export class CabinetRenderer {
       });
     }
 
-    // NEW: Smooth Explode animation interpolating saved originalPosition and direction
     const explodeDistance = 350;
     if (this.cabinetGroup) {
       this.cabinetGroup.traverse((obj) => {
@@ -1048,14 +993,13 @@ export class CabinetRenderer {
           obj.userData.originalPosition
         ) {
           const targetPos = obj.userData.originalPosition.clone();
-
           if (this.isExploded) {
-            const offset = obj.userData.explodeDirection
-              .clone()
-              .multiplyScalar(explodeDistance);
-            targetPos.add(offset);
+            targetPos.add(
+              obj.userData.explodeDirection
+                .clone()
+                .multiplyScalar(explodeDistance),
+            );
           }
-
           obj.position.lerp(targetPos, lerpFactor);
         }
       });
@@ -1066,24 +1010,18 @@ export class CabinetRenderer {
   }
 
   dispose() {
-    // Stop animation loop
     this._disposed = true;
-
-    // Traverse and dispose all geometries and materials
     if (this.scene) {
       this.scene.traverse((obj) => {
         if (obj.geometry) obj.geometry.dispose();
         if (obj.material) {
-          if (Array.isArray(obj.material)) {
+          if (Array.isArray(obj.material))
             obj.material.forEach((m) => m.dispose());
-          } else {
-            obj.material.dispose();
-          }
+          else obj.material.dispose();
         }
       });
     }
 
-    // Dispose dimension lines
     this.dimensionLines.forEach((line) => {
       if (line.geometry) line.geometry.dispose();
       if (line.material) line.material.dispose();
@@ -1092,16 +1030,13 @@ export class CabinetRenderer {
     this.controls.dispose();
     this.renderer.dispose();
 
-    if (this.toggleButton && this.container.contains(this.toggleButton)) {
+    if (this.toggleButton && this.container.contains(this.toggleButton))
       this.container.removeChild(this.toggleButton);
-    }
     if (
       this.renderer.domElement &&
       this.container.contains(this.renderer.domElement)
-    ) {
+    )
       this.container.removeChild(this.renderer.domElement);
-    }
-
     window.removeEventListener("resize", () => this.onWindowResize());
     window.removeEventListener("keydown", () => {});
   }
