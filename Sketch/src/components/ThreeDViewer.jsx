@@ -7,6 +7,8 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
   const [viewMode, setViewMode] = useState("perspective");
   const [showDimensions, setShowDimensions] = useState(true);
   const [exploded, setExploded] = useState(false);
+  const [doorsOpen, setDoorsOpen] = useState(false);
+  const [drawersOpen, setDrawersOpen] = useState(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -170,8 +172,74 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
         <div style={{ height: 1, background: ui.border, margin: "8px 0" }} />
 
         {/* Actions */}
+        {/* Split Controls Container */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr",
+            gap: "8px",
+            marginTop: "8px",
+          }}
+        >
+          {/* 1. Toggle Doors Button */}
+          <button
+            onClick={() => {
+              if (rendererRef.current) {
+                rendererRef.current.toggleDoors();
+                setDoorsOpen(!doorsOpen);
+              }
+            }}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              fontSize: 10,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              border: `1.5px solid ${ui.border}`,
+              background: ui.inputBg,
+              color: ui.text,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            {doorsOpen ? "🚪 Close Doors" : "🚪 Open Doors"}
+          </button>
+
+          {/* 2. Toggle Drawers Button */}
+          <button
+            onClick={() => {
+              if (rendererRef.current) {
+                rendererRef.current.toggleDrawers();
+                setDrawersOpen(!drawersOpen);
+              }
+            }}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              fontSize: 10,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              border: `1.5px solid ${ui.border}`,
+              background: ui.inputBg,
+              color: ui.text,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            {drawersOpen ? "🗄️ Close Drawers" : "🗄️ Open Drawers"}
+          </button>
+        </div>
+
         <button
-          onClick={handleScreenshot}
+          onClick={() => {
+            if (rendererRef.current) {
+              rendererRef.current.printView();
+            }
+          }}
           style={{
             padding: "6px 12px",
             borderRadius: 6,
@@ -187,7 +255,7 @@ export default function ThreeDViewer({ config, onSectionSelect, ui }) {
             gap: 6,
           }}
         >
-          📸 Screenshot
+          🖨️ Print View
         </button>
 
         <button

@@ -28,6 +28,7 @@ export class CabinetRenderer {
 
     // Animation states
     this.isDoorsOpen = false;
+    this.isDrawersOpen = false;
     this.isExploded = false;
     this.doorHinges = [];
     this.drawers = [];
@@ -46,7 +47,11 @@ export class CabinetRenderer {
     this.camera.position.set(0, 1200, 3500);
     this.camera.lookAt(0, 1100, 0);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: false,
+      preserveDrawingBuffer: true,
+    });
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -71,7 +76,6 @@ export class CabinetRenderer {
 
     this.setupLighting();
     this.setupHelpers();
-    this.setupUI();
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
@@ -81,53 +85,59 @@ export class CabinetRenderer {
     this.animate();
   }
 
-  setupUI() {
-    this.toggleButton = document.createElement("button");
-    this.toggleButton.innerText = "Open Doors & Drawers";
-    this.toggleButton.style.position = "absolute";
-    this.toggleButton.style.bottom = "20px";
-    this.toggleButton.style.right = "20px";
-    this.toggleButton.style.padding = "6px 12px";
-    this.toggleButton.style.backgroundColor = "#2563eb";
-    this.toggleButton.style.color = "#ffffff";
-    this.toggleButton.style.border = "none";
-    this.toggleButton.style.borderRadius = "8px";
-    this.toggleButton.style.cursor = "pointer";
-    this.toggleButton.style.fontFamily =
-      "'IBM Plex Mono', 'Courier New', monospace";
-    this.toggleButton.style.fontWeight = "600";
-    this.toggleButton.style.fontSize = "10px";
-    this.toggleButton.style.boxShadow =
-      "0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06)";
-    this.toggleButton.style.transition = "all 0.2s ease";
-
-    this.toggleButton.onmouseover = () => {
-      this.toggleButton.style.backgroundColor = "#1d4ed8";
-      this.toggleButton.style.transform = "translateY(-1px)";
-    };
-    this.toggleButton.onmouseout = () => {
-      this.toggleButton.style.backgroundColor = "#2563eb";
-      this.toggleButton.style.transform = "translateY(0)";
-    };
-
-    this.toggleButton.onclick = () => this.toggleDoors();
-    this.container.appendChild(this.toggleButton);
+  printView() {
+    this.renderer.render(this.scene, this.camera);
+    const dataUrl = this.renderer.domElement.toDataURL("image/png");
+    const printWindow = window.open("", "_blank");
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Cabinet Shop Drawing</title>
+          <style>
+            body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #fff; }
+            img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+            @media print {
+              @page { margin: 0; size: landscape; }
+              body { margin: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <img src="${dataUrl}" onload="window.print(); window.close();" />
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   }
 
   toggleDoors() {
     this.isDoorsOpen = !this.isDoorsOpen;
-    this.toggleButton.innerText = this.isDoorsOpen
-      ? "Close Doors & Drawers"
-      : "Open Doors & Drawers";
-
     this.doorHinges.forEach((door) => {
       door.userData.targetY = this.isDoorsOpen ? -Math.PI / 2.0 : 0;
     });
+    this.updateDrawerPositions();
+  }
 
+  toggleDrawers() {
+    this.isDrawersOpen = !this.isDrawersOpen;
+    this.updateDrawerPositions();
+  }
+
+  // NEW: Smart Collision & Dependency Checker
+  updateDrawerPositions() {
     this.drawers.forEach((drawer) => {
-      drawer.userData.targetZ = this.isDoorsOpen
-        ? drawer.userData.openOffset
-        : 0;
+      if (this.isDrawersOpen) {
+        // If the drawer is internal, it CANNOT open unless doors are also open
+        if (drawer.userData.isInternal && !this.isDoorsOpen) {
+          drawer.userData.targetZ = 0;
+        } else {
+          // Custom drawers, or internal drawers when doors are open, are free to move
+          drawer.userData.targetZ = drawer.userData.openOffset;
+        }
+      } else {
+        // If drawers are toggled off, close them all
+        drawer.userData.targetZ = 0;
+      }
     });
   }
 
@@ -605,7 +615,13 @@ export class CabinetRenderer {
       for (let i = 0; i < drawerCount; i++) {
         const drawerY = drawerAreaStart + i * drawerHeight + drawerHeight / 2;
         const drawerGroupTarget = new THREE.Group();
-        drawerGroupTarget.userData = { targetZ: 0, openOffset: cD * 0.65 };
+        // If placement is custom, it is exposed. Otherwise, it is hidden behind a door.
+        const isInternal = placement !== "custom";
+        drawerGroupTarget.userData = {
+          targetZ: 0,
+          openOffset: cD * 0.65,
+          isInternal,
+        };
 
         // Drawer Box
         const dBoxGeo = new THREE.BoxGeometry(
@@ -786,34 +802,138 @@ export class CabinetRenderer {
     }
   }
 
-  addDimensionAnnotations(L, totalHeight, D) {
+  createDimensionLabel(text, position) {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    // Double the resolution for crisp, anti-aliased text
+    canvas.width = 512;
+    canvas.height = 128;
+
+    // 1. Draw a white pill background with a subtle border
+    const radius = 32;
+    const x = 96,
+      y = 24,
+      w = 320,
+      h = 80;
+
+    context.beginPath();
+    context.moveTo(x + radius, y);
+    context.lineTo(x + w - radius, y);
+    context.quadraticCurveTo(x + w, y, x + w, y + radius);
+    context.lineTo(x + w, y + h - radius);
+    context.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    context.lineTo(x + radius, y + h);
+    context.quadraticCurveTo(x, y + h, x, y + h - radius);
+    context.lineTo(x, y + radius);
+    context.quadraticCurveTo(x, y, x + radius, y);
+    context.closePath();
+
+    context.fillStyle = "rgba(255, 255, 255, 0.9)";
+    context.fill();
+    context.strokeStyle = "#cbd5e1"; // Light grey border
+    context.lineWidth = 3;
+    context.stroke();
+
+    // 2. Draw the crisp text
+    context.font = '600 36px "IBM Plex Mono", system-ui, monospace';
+    context.fillStyle = "#334155"; // Dark slate grey text
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(text, 256, 64);
+
+    // 3. Create the Sprite
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter; // Ensures text stays sharp when zooming
+
+    const spriteMaterial = new THREE.SpriteMaterial({
+      map: texture,
+      depthTest: false,
+      transparent: true,
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+
+    // Scale matches the 4:1 aspect ratio of the canvas
+    sprite.scale.set(600, 150, 1);
+    sprite.position.copy(position);
+    sprite.renderOrder = 999; // Ensure labels always render on top of lines
+
+    return sprite;
+  }
+
+  addDimensionAnnotations(L, H, D) {
     this.dimensionLines.forEach((line) => this.scene.remove(line));
     this.dimensionLines = [];
 
-    const color = 0x2563eb;
-    const lineMaterial = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+    const lineColor = 0x64748b; // Professional Slate Grey
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: lineColor,
+      linewidth: 1.5,
+    });
 
-    const widthPoints = [
-      new THREE.Vector3(-L / 2, -100, D / 2 + 100),
-      new THREE.Vector3(L / 2, -100, D / 2 + 100),
-    ];
-    const widthLine = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(widthPoints),
-      lineMaterial,
-    );
-    this.scene.add(widthLine);
-    this.dimensionLines.push(widthLine);
+    // Helper function to draw a line and its end ticks
+    const drawCADLine = (p1, p2, tickDir) => {
+      // Main Line
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+      const line = new THREE.Line(lineGeo, lineMaterial);
+      this.scene.add(line);
+      this.dimensionLines.push(line);
 
-    const heightPoints = [
-      new THREE.Vector3(-L / 2 - 100, 0, 0),
-      new THREE.Vector3(-L / 2 - 100, totalHeight, 0),
-    ];
-    const heightLine = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(heightPoints),
-      lineMaterial,
+      // Ticks (perpendicular markers at the ends)
+      const tickSize = 20;
+      const t1Geo = new THREE.BufferGeometry().setFromPoints([
+        p1.clone().addScaledVector(tickDir, tickSize),
+        p1.clone().addScaledVector(tickDir, -tickSize),
+      ]);
+      const t1 = new THREE.Line(t1Geo, lineMaterial);
+      this.scene.add(t1);
+      this.dimensionLines.push(t1);
+
+      const t2Geo = new THREE.BufferGeometry().setFromPoints([
+        p2.clone().addScaledVector(tickDir, tickSize),
+        p2.clone().addScaledVector(tickDir, -tickSize),
+      ]);
+      const t2 = new THREE.Line(t2Geo, lineMaterial);
+      this.scene.add(t2);
+      this.dimensionLines.push(t2);
+    };
+
+    const offset = 120; // Distance from the cabinet
+
+    // 1. WIDTH (Bottom Front)
+    const wP1 = new THREE.Vector3(-L / 2, -offset, D / 2 + offset / 2);
+    const wP2 = new THREE.Vector3(L / 2, -offset, D / 2 + offset / 2);
+    drawCADLine(wP1, wP2, new THREE.Vector3(0, 0, 1)); // Ticks point on Z axis
+
+    const widthLabel = this.createDimensionLabel(
+      `W: ${L} mm`,
+      new THREE.Vector3(0, -offset, D / 2 + offset / 2),
     );
-    this.scene.add(heightLine);
-    this.dimensionLines.push(heightLine);
+    this.scene.add(widthLabel);
+    this.dimensionLines.push(widthLabel);
+
+    // 2. HEIGHT (Left Front)
+    const hP1 = new THREE.Vector3(-L / 2 - offset, 0, D / 2);
+    const hP2 = new THREE.Vector3(-L / 2 - offset, H, D / 2);
+    drawCADLine(hP1, hP2, new THREE.Vector3(1, 0, 0)); // Ticks point on X axis
+
+    const heightLabel = this.createDimensionLabel(
+      `H: ${H} mm`,
+      new THREE.Vector3(-L / 2 - offset, H / 2, D / 2),
+    );
+    this.scene.add(heightLabel);
+    this.dimensionLines.push(heightLabel);
+
+    // 3. DEPTH (Right Bottom)
+    const dP1 = new THREE.Vector3(L / 2 + offset, -offset, -D / 2);
+    const dP2 = new THREE.Vector3(L / 2 + offset, -offset, D / 2);
+    drawCADLine(dP1, dP2, new THREE.Vector3(1, 0, 0)); // Ticks point on X axis
+
+    const depthLabel = this.createDimensionLabel(
+      `D: ${D} mm`,
+      new THREE.Vector3(L / 2 + offset, -offset, 0),
+    );
+    this.scene.add(depthLabel);
+    this.dimensionLines.push(depthLabel);
   }
 
   setupEventListeners() {
@@ -1030,8 +1150,6 @@ export class CabinetRenderer {
     this.controls.dispose();
     this.renderer.dispose();
 
-    if (this.toggleButton && this.container.contains(this.toggleButton))
-      this.container.removeChild(this.toggleButton);
     if (
       this.renderer.domElement &&
       this.container.contains(this.renderer.domElement)
